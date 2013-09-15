@@ -216,6 +216,7 @@ static bool menu_type_is_directory_browser(unsigned type)
 #endif
       type == RGUI_SAVESTATE_DIR_PATH ||
       type == RGUI_LIBRETRO_DIR_PATH ||
+      type == RGUI_CONFIG_DIR_PATH ||
       type == RGUI_SAVEFILE_DIR_PATH ||
 #ifdef HAVE_OVERLAY
       type == RGUI_OVERLAY_DIR_PATH ||
@@ -476,6 +477,8 @@ static void render_text(rgui_handle_t *rgui)
       snprintf(title, sizeof(title), "SAVESTATE DIR %s", dir);
    else if (menu_type == RGUI_LIBRETRO_DIR_PATH)
       snprintf(title, sizeof(title), "LIBRETRO DIR %s", dir);
+   else if (menu_type == RGUI_CONFIG_DIR_PATH)
+      snprintf(title, sizeof(title), "CONFIG DIR %s", dir);
    else if (menu_type == RGUI_SAVEFILE_DIR_PATH)
       snprintf(title, sizeof(title), "SAVEFILE DIR %s", dir);
 #ifdef HAVE_OVERLAY
@@ -698,6 +701,9 @@ static void render_text(rgui_handle_t *rgui)
                break;
             case RGUI_LIBRETRO_DIR_PATH:
                strlcpy(type_str, *rgui->libretro_dir ? rgui->libretro_dir : "<None>", sizeof(type_str));
+               break;
+            case RGUI_CONFIG_DIR_PATH:
+               strlcpy(type_str, *g_settings.rgui_config_directory ? g_settings.rgui_config_directory : "<default>", sizeof(type_str));
                break;
             case RGUI_SHADER_DIR_PATH:
                strlcpy(type_str, *g_settings.video.shader_dir ? g_settings.video.shader_dir : "<default>", sizeof(type_str));
@@ -1402,6 +1408,10 @@ static int rgui_settings_toggle_setting(rgui_handle_t *rgui, unsigned setting, r
       case RGUI_LIBRETRO_DIR_PATH:
          if (action == RGUI_ACTION_START)
             *rgui->libretro_dir = '\0';
+         break;
+      case RGUI_CONFIG_DIR_PATH:
+         if (action == RGUI_ACTION_START)
+            *g_settings.rgui_config_directory = '\0';
          break;
       case RGUI_SHADER_DIR_PATH:
          if (action == RGUI_ACTION_START)
@@ -2115,6 +2125,7 @@ static void rgui_settings_path_populate_entries(rgui_handle_t *rgui)
 {
    rgui_list_clear(rgui->selection_buf);
    rgui_list_push(rgui->selection_buf, "Browser Directory", RGUI_BROWSER_DIR_PATH, 0);
+   rgui_list_push(rgui->selection_buf, "Config Directory", RGUI_CONFIG_DIR_PATH, 0);
 #ifdef HAVE_DYNAMIC
    rgui_list_push(rgui->selection_buf, "Core Directory", RGUI_LIBRETRO_DIR_PATH, 0);
 #endif
@@ -2859,7 +2870,12 @@ int rgui_iterate(rgui_handle_t *rgui)
             }
             else if (menu_type == RGUI_LIBRETRO_DIR_PATH)
             {
-               strlcpy(rgui->libretro_dir, dir, sizeof(g_extern.savestate_dir));
+               strlcpy(rgui->libretro_dir, dir, sizeof(rgui->libretro_dir));
+               rgui_flush_menu_stack_type(rgui, RGUI_SETTINGS_PATH_OPTIONS);
+            }
+            else if (menu_type == RGUI_CONFIG_DIR_PATH)
+            {
+               strlcpy(g_settings.rgui_config_directory, dir, sizeof(g_settings.rgui_config_directory));
                rgui_flush_menu_stack_type(rgui, RGUI_SETTINGS_PATH_OPTIONS);
             }
             else if (menu_type == RGUI_SHADER_DIR_PATH)
