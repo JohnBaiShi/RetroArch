@@ -141,6 +141,7 @@ typedef enum
    RGUI_SETTINGS_OPEN_FILEBROWSER,
    RGUI_SETTINGS_OPEN_HISTORY,
    RGUI_SETTINGS_CORE,
+   RGUI_SETTINGS_CONFIG,
    RGUI_SETTINGS_CORE_OPTIONS,
    RGUI_SETTINGS_AUDIO_OPTIONS,
    RGUI_SETTINGS_INPUT_OPTIONS,
@@ -253,6 +254,7 @@ typedef struct
 #ifdef HAVE_DYNAMIC
    char libretro_dir[PATH_MAX];
 #endif
+   char config_dir[PATH_MAX];
    struct retro_system_info info;
    bool load_no_rom;
 
@@ -302,6 +304,8 @@ void load_menu_game_history(unsigned game_index);
 void menu_rom_history_push(const char *path, const char *core_path,
       const char *core_name);
 void menu_rom_history_push_current(void);
+
+bool menu_replace_config(const char *path);
 
 #ifdef __cplusplus
 }
