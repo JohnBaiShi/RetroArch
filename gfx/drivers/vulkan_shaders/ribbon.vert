@@ -1,7 +1,7 @@
 #version 310 es
 
-layout(location = 0) in vec3 VertexCoord;
-layout(location = 0) out vec3 vEC;
+layout(location = 0) in vec2 VertexCoord;
+layout(location = 0) out vec3 vNormal;
 
 layout(std140, set = 0, binding = 0) uniform UBO
 {
@@ -30,9 +30,9 @@ float xmb_noise2(vec3 x)
    return cos(x.z * 2.0);
 }
 
-void main()
+vec3 get_position(vec2 coord)
 {
-   vec3 v = vec3(VertexCoord.x, 0.0, VertexCoord.y);
+   vec3 v = vec3(coord.x, 0.0, coord.y);
    vec3 v2 = v;
    vec3 v3 = v;
 
@@ -46,7 +46,14 @@ void main()
 
    v.z -= noise(v3 * 7.0) / 15.0;
    v.y -= noise(v3 * 7.0) / 15.0 + cos(v.x * 2.0 - constants.time / 5.0) / 5.0 - 0.3;
+   return v;
+}
 
-   vEC = v;
-   gl_Position = vec4(v, 1.0);
+void main()
+{
+   vec3 pos = get_position(VertexCoord);
+   vec3 pos_x = get_position(VertexCoord + vec2(0.001, 0.0));
+   vec3 pos_y = get_position(VertexCoord + vec2(0.0, 0.001));
+   vNormal = normalize(vec3(1000.0, 1.0, 1000.0) * cross(pos_x - pos, pos_y - pos));
+   gl_Position = vec4(pos, 1.0);
 }
