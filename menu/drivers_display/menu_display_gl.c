@@ -179,6 +179,10 @@ static void menu_display_gl_draw_pipeline(void *data)
 
          t += 0.01;
 
+         /* Wrap to avoid unstable FP math */
+         if (t > 1000.0)
+            t -= 1000.0;
+
          uniform_param.enabled           = true;
          uniform_param.lookup.enable     = true;
          uniform_param.lookup.add_prefix = true;

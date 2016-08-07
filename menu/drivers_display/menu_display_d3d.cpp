@@ -204,6 +204,9 @@ static void menu_display_d3d_draw_pipeline(void *data)
          video_shader_driver_use(&shader_info);
 
          t += 0.01;
+         /* Wrap to avoid unstable FP math */
+         if (t > 1000.0)
+            t -= 1000.0;
 
          uniform_param.enabled           = true;
          uniform_param.lookup.enable     = true;

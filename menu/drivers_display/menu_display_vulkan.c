@@ -112,6 +112,9 @@ static void menu_display_vk_draw_pipeline(void *data)
    draw->pipeline.backend_data = &t;
 
    t += 0.01;
+   /* Wrap to avoid unstable FP math */
+   if (t > 1000.0)
+      t -= 1000.0;
 #endif
 }
 

@@ -1,6 +1,6 @@
 #include "shaders_common.h"
 
-static const char *stock_fragment_xmb = GLSL(
+static const char *stock_fragment_xmb = GLSL_HIGHP(
    uniform float time;
    varying vec3 fragVertexEc;
    vec3 up = vec3(0, 0, 1);
