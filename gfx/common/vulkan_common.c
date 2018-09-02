@@ -38,6 +38,10 @@
 #include "../../libretro-common/include/retro_math.h"
 #include "../../libretro-common/include/string/stdstring.h"
 
+#if defined(_WIN32) || 1
+#define VULKAN_EMULATE_MAILBOX
+#endif
+
 static dylib_t                       vulkan_library;
 static VkInstance                    cached_instance_vk;
 static VkDevice                      cached_device_vk;
@@ -1494,6 +1498,10 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
       "VK_KHR_sampler_mirror_clamp_to_edge",
    };
 
+#ifdef VULKAN_EMULATE_MAILBOX
+   vk->emulate_mailbox = true;
+#endif
+
 #ifdef VULKAN_DEBUG
    static const char *device_layers[] = { "VK_LAYER_LUNARG_standard_validation" };
 #endif
@@ -2333,6 +2341,7 @@ static void vulkan_destroy_swapchain(gfx_ctx_vulkan_data_t *vk)
       vkDestroySwapchainKHR(vk->context.device, vk->swapchain, NULL);
       memset(vk->context.swapchain_images, 0, sizeof(vk->context.swapchain_images));
       vk->swapchain = VK_NULL_HANDLE;
+      vk->context.has_acquired_swapchain = false;
    }
 
    for (i = 0; i < VULKAN_MAX_SWAPCHAIN_IMAGES; i++)
@@ -2351,9 +2360,10 @@ static void vulkan_destroy_swapchain(gfx_ctx_vulkan_data_t *vk)
 
 void vulkan_present(gfx_ctx_vulkan_data_t *vk, unsigned index)
 {
-   VkPresentInfoKHR present        = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
-   VkResult result                 = VK_SUCCESS;
-   VkResult err                    = VK_SUCCESS;
+   VkPresentInfoKHR present           = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+   VkResult result                    = VK_SUCCESS;
+   VkResult err                       = VK_SUCCESS;
+   vk->context.has_acquired_swapchain = false;
 
    /* We're still waiting for a proper swapchain, so just fake it. */
    if (vk->swapchain == VK_NULL_HANDLE)
@@ -2525,12 +2535,29 @@ retry:
 
    vkCreateFence(vk->context.device, &fence_info, NULL, &fence);
 
-   err = vkAcquireNextImageKHR(vk->context.device,
-         vk->swapchain, UINT64_MAX,
-         VK_NULL_HANDLE, fence, &vk->context.current_swapchain_index);
+   if (vk->emulating_mailbox)
+   {
+      /* Non-blocking acquire. If we don't get a swapchain frame right away,
+       * just skip rendering to the swapchain this frame, similar to what
+       * MAILBOX would do. */
+      err = vkAcquireNextImageKHR(vk->context.device,
+            vk->swapchain, 0,
+            VK_NULL_HANDLE, fence, &vk->context.current_swapchain_index);
+   }
+   else
+   {
+      err = vkAcquireNextImageKHR(vk->context.device,
+            vk->swapchain, UINT64_MAX,
+            VK_NULL_HANDLE, fence, &vk->context.current_swapchain_index);
+   }
 
    if (err == VK_SUCCESS)
+   {
       vkWaitForFences(vk->context.device, 1, &fence, true, UINT64_MAX);
+      vk->context.has_acquired_swapchain = true;
+   }
+   else
+      vk->context.has_acquired_swapchain = false;
 
 #ifdef WSI_HARDENING_TEST
    trigger_spurious_error_vkresult(&err);
@@ -2538,7 +2565,13 @@ retry:
 
    vkDestroyFence(vk->context.device, fence, NULL);
 
-   if (err == VK_ERROR_OUT_OF_DATE_KHR)
+   if (err == VK_NOT_READY || err == VK_TIMEOUT)
+   {
+      /* Just pretend we have a swapchain index, round-robin style. */
+      vk->context.current_swapchain_index =
+         (vk->context.current_swapchain_index + 1) % vk->context.num_swapchain_images;
+   }
+   else if (err == VK_ERROR_OUT_OF_DATE_KHR)
    {
       /* Throw away the old swapchain and try again. */
       vulkan_destroy_swapchain(vk);
@@ -2600,6 +2633,14 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
 
    vkDeviceWaitIdle(vk->context.device);
    vulkan_acquire_clear_fences(vk);
+
+   if (swap_interval == 0 && vk->emulate_mailbox)
+   {
+      swap_interval = 1;
+      vk->emulating_mailbox = true;
+   }
+   else
+      vk->emulating_mailbox = false;
 
    vk->created_new_swapchain = true;
    if (vk->swapchain != VK_NULL_HANDLE &&
