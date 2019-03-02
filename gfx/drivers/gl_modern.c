@@ -68,10 +68,14 @@ typedef struct gl_core
    unsigned rotation;
 } gl_core_t;
 
+static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
+
 static void gl_core_destroy_resources(gl_core_t *gl)
 {
-   if (gl)
-      free(gl);
+   if (!gl)
+      return;
+
+   free(gl);
 }
 
 static const gfx_ctx_driver_t *gl_core_get_context(gl_core_t *gl)
@@ -103,189 +107,6 @@ static const gfx_ctx_driver_t *gl_core_get_context(gl_core_t *gl)
    return gfx_ctx;
 }
 
-static void *gl_core_init(const video_info_t *video,
-      const input_driver_t **input, void **input_data)
-{
-   gfx_ctx_mode_t mode;
-   gfx_ctx_input_t inp;
-   unsigned full_x, full_y;
-   settings_t *settings                 = config_get_ptr();
-   int interval                         = 0;
-   unsigned win_width                   = 0;
-   unsigned win_height                  = 0;
-   unsigned temp_width                  = 0;
-   unsigned temp_height                 = 0;
-   const char *vendor                   = NULL;
-   const char *renderer                 = NULL;
-   const char *version                  = NULL;
-   gl_core_t *gl                        = (gl_core_t*)calloc(1, sizeof(gl_core_t));
-   const gfx_ctx_driver_t *ctx_driver   = gl_core_get_context(gl);
-
-   if (!gl || !ctx_driver)
-      goto error;
-
-   video_context_driver_set(ctx_driver);
-
-   gl->ctx_driver                       = ctx_driver;
-   gl->video_info                       = *video;
-
-   RARCH_LOG("[GLCore]: Found GL context: %s\n", ctx_driver->ident);
-
-   video_context_driver_get_video_size(&mode);
-
-   full_x      = mode.width;
-   full_y      = mode.height;
-   mode.width  = 0;
-   mode.height = 0;
-   interval    = 0;
-
-   RARCH_LOG("[GLCore]: Detecting screen resolution %ux%u.\n", full_x, full_y);
-
-   if (video->vsync)
-      interval = video->swap_interval;
-
-   video_context_driver_swap_interval(&interval);
-
-   win_width   = video->width;
-   win_height  = video->height;
-
-   if (video->fullscreen && (win_width == 0) && (win_height == 0))
-   {
-      win_width  = full_x;
-      win_height = full_y;
-   }
-
-   mode.width      = win_width;
-   mode.height     = win_height;
-   mode.fullscreen = video->fullscreen;
-
-   if (!video_context_driver_set_video_mode(&mode))
-      goto error;
-
-   rglgen_resolve_symbols(ctx_driver->get_proc_address);
-
-   /* Clear out potential error flags in case we use cached context. */
-   glGetError();
-
-   vendor   = (const char*)glGetString(GL_VENDOR);
-   renderer = (const char*)glGetString(GL_RENDERER);
-   version  = (const char*)glGetString(GL_VERSION);
-
-   RARCH_LOG("[GLCore]: Vendor: %s, Renderer: %s.\n", vendor, renderer);
-   RARCH_LOG("[GLCore]: Version: %s.\n", version);
-
-   if (string_is_equal(ctx_driver->ident, "null"))
-      goto error;
-
-   if (!string_is_empty(version))
-      sscanf(version, "%d.%d", &gl->version_major, &gl->version_minor);
-
-   gl->vsync      = video->vsync;
-   gl->fullscreen = video->fullscreen;
-
-   mode.width     = 0;
-   mode.height    = 0;
-
-   video_context_driver_get_video_size(&mode);
-
-   temp_width     = mode.width;
-   temp_height    = mode.height;
-   mode.width     = 0;
-   mode.height    = 0;
-
-   /* Get real known video size, which might have been altered by context. */
-
-   if (temp_width != 0 && temp_height != 0)
-      video_driver_set_size(&temp_width, &temp_height);
-
-   video_driver_get_size(&temp_width, &temp_height);
-
-   RARCH_LOG("[GLCore]: Using resolution %ux%u\n", temp_width, temp_height);
-
-   inp.input      = input;
-   inp.input_data = input_data;
-   video_context_driver_input_driver(&inp);
-
-   return gl;
-
-error:
-   video_context_driver_destroy();
-   gl_core_destroy_resources(gl);
-   return NULL;
-}
-
-static void gl_core_free(void *data)
-{
-   gl_core_t *gl = (gl_core_t*)data;
-   if (!gl)
-      return;
-
-   font_driver_free_osd();
-   video_context_driver_free();
-   gl_core_destroy_resources(gl);
-}
-
-static bool gl_core_alive(void *data)
-{
-   unsigned temp_width  = 0;
-   unsigned temp_height = 0;
-   bool ret             = false;
-   bool quit            = false;
-   bool resize          = false;
-   gl_core_t *gl        = (gl_core_t*)data;
-   bool is_shutdown     = rarch_ctl(RARCH_CTL_IS_SHUTDOWN, NULL);
-
-   /* Needed because some context drivers don't track their sizes */
-   video_driver_get_size(&temp_width, &temp_height);
-
-   gl->ctx_driver->check_window(gl->ctx_data,
-                                &quit, &resize, &temp_width, &temp_height, is_shutdown);
-
-   if (quit)
-      gl->quitting = true;
-   else if (resize)
-      gl->should_resize = true;
-
-   ret = !gl->quitting;
-
-   if (temp_width != 0 && temp_height != 0)
-      video_driver_set_size(&temp_width, &temp_height);
-
-   return ret;
-}
-
-static void gl_core_set_nonblock_state(void *data, bool state)
-{
-   int interval                = 0;
-   gl_core_t         *gl       = (gl_core_t*)data;
-   settings_t        *settings = config_get_ptr();
-
-   if (!gl)
-      return;
-
-   RARCH_LOG("[GLCore]: VSync => %s\n", state ? "off" : "on");
-
-   if (!state)
-      interval = settings->uints.video_swap_interval;
-
-   video_context_driver_swap_interval(&interval);
-}
-
-static bool gl_core_suppress_screensaver(void *data, bool enable)
-{
-   bool enabled = enable;
-   return video_context_driver_suppress_screensaver(&enabled);
-}
-
-static bool gl_core_set_shader(void *data,
-                               enum rarch_shader_type type, const char *path)
-{
-   (void)type;
-   (void)data;
-   (void)path;
-   return false;
-}
-
 static void gl_core_set_projection(gl_core_t *gl,
                                    const struct video_ortho *ortho, bool allow_rotate)
 {
@@ -304,8 +125,6 @@ static void gl_core_set_projection(gl_core_t *gl,
    matrix_4x4_rotate_z(rot, M_PI * gl->rotation / 180.0f);
    matrix_4x4_multiply(gl->mvp, rot, gl->mvp_no_rot);
 }
-
-static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
 
 static void gl_core_set_viewport(gl_core_t *gl,
                                  video_frame_info_t *video_info,
@@ -405,6 +224,188 @@ static void gl_core_set_viewport(gl_core_t *gl,
 #endif
 }
 
+static void *gl_core_init(const video_info_t *video,
+      const input_driver_t **input, void **input_data)
+{
+   gfx_ctx_mode_t mode;
+   gfx_ctx_input_t inp;
+   unsigned full_x, full_y;
+   settings_t *settings                 = config_get_ptr();
+   int interval                         = 0;
+   unsigned win_width                   = 0;
+   unsigned win_height                  = 0;
+   unsigned temp_width                  = 0;
+   unsigned temp_height                 = 0;
+   const char *vendor                   = NULL;
+   const char *renderer                 = NULL;
+   const char *version                  = NULL;
+   gl_core_t *gl                        = (gl_core_t*)calloc(1, sizeof(gl_core_t));
+   const gfx_ctx_driver_t *ctx_driver   = gl_core_get_context(gl);
+
+   if (!gl || !ctx_driver)
+      goto error;
+
+   video_context_driver_set(ctx_driver);
+
+   gl->ctx_driver                       = ctx_driver;
+   gl->video_info                       = *video;
+
+   RARCH_LOG("[GLCore]: Found GL context: %s\n", ctx_driver->ident);
+
+   video_context_driver_get_video_size(&mode);
+
+   full_x      = mode.width;
+   full_y      = mode.height;
+   mode.width  = 0;
+   mode.height = 0;
+   interval    = 0;
+
+   RARCH_LOG("[GLCore]: Detecting screen resolution %ux%u.\n", full_x, full_y);
+
+   if (video->vsync)
+      interval = video->swap_interval;
+
+   video_context_driver_swap_interval(&interval);
+
+   win_width   = video->width;
+   win_height  = video->height;
+
+   if (video->fullscreen && (win_width == 0) && (win_height == 0))
+   {
+      win_width  = full_x;
+      win_height = full_y;
+   }
+
+   mode.width      = win_width;
+   mode.height     = win_height;
+   mode.fullscreen = video->fullscreen;
+
+   if (!video_context_driver_set_video_mode(&mode))
+      goto error;
+
+   rglgen_resolve_symbols(ctx_driver->get_proc_address);
+
+   /* Clear out potential error flags in case we use cached context. */
+   glGetError();
+
+   vendor   = (const char*)glGetString(GL_VENDOR);
+   renderer = (const char*)glGetString(GL_RENDERER);
+   version  = (const char*)glGetString(GL_VERSION);
+
+   RARCH_LOG("[GLCore]: Vendor: %s, Renderer: %s.\n", vendor, renderer);
+   RARCH_LOG("[GLCore]: Version: %s.\n", version);
+
+   if (string_is_equal(ctx_driver->ident, "null"))
+      goto error;
+
+   if (!string_is_empty(version))
+      sscanf(version, "%d.%d", &gl->version_major, &gl->version_minor);
+
+   gl->vsync      = video->vsync;
+   gl->fullscreen = video->fullscreen;
+
+   mode.width     = 0;
+   mode.height    = 0;
+
+   video_context_driver_get_video_size(&mode);
+   temp_width     = mode.width;
+   temp_height    = mode.height;
+
+   mode.width     = 0;
+   mode.height    = 0;
+
+   /* Get real known video size, which might have been altered by context. */
+
+   if (temp_width != 0 && temp_height != 0)
+      video_driver_set_size(&temp_width, &temp_height);
+   video_driver_get_size(&temp_width, &temp_height);
+
+   RARCH_LOG("[GLCore]: Using resolution %ux%u\n", temp_width, temp_height);
+
+   inp.input      = input;
+   inp.input_data = input_data;
+   video_context_driver_input_driver(&inp);
+
+   return gl;
+
+error:
+   video_context_driver_destroy();
+   gl_core_destroy_resources(gl);
+   return NULL;
+}
+
+static void gl_core_free(void *data)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+   if (!gl)
+      return;
+
+   font_driver_free_osd();
+   video_context_driver_free();
+   gl_core_destroy_resources(gl);
+}
+
+static bool gl_core_alive(void *data)
+{
+   unsigned temp_width  = 0;
+   unsigned temp_height = 0;
+   bool ret             = false;
+   bool quit            = false;
+   bool resize          = false;
+   gl_core_t *gl        = (gl_core_t*)data;
+   bool is_shutdown     = rarch_ctl(RARCH_CTL_IS_SHUTDOWN, NULL);
+
+   /* Needed because some context drivers don't track their sizes */
+   video_driver_get_size(&temp_width, &temp_height);
+
+   gl->ctx_driver->check_window(gl->ctx_data,
+                                &quit, &resize, &temp_width, &temp_height, is_shutdown);
+
+   if (quit)
+      gl->quitting = true;
+   else if (resize)
+      gl->should_resize = true;
+
+   ret = !gl->quitting;
+
+   if (temp_width != 0 && temp_height != 0)
+      video_driver_set_size(&temp_width, &temp_height);
+
+   return ret;
+}
+
+static void gl_core_set_nonblock_state(void *data, bool state)
+{
+   int interval                = 0;
+   gl_core_t         *gl       = (gl_core_t*)data;
+   settings_t        *settings = config_get_ptr();
+
+   if (!gl)
+      return;
+
+   RARCH_LOG("[GLCore]: VSync => %s\n", state ? "off" : "on");
+
+   if (!state)
+      interval = settings->uints.video_swap_interval;
+
+   video_context_driver_swap_interval(&interval);
+}
+
+static bool gl_core_suppress_screensaver(void *data, bool enable)
+{
+   bool enabled = enable;
+   return video_context_driver_suppress_screensaver(&enabled);
+}
+
+static bool gl_core_set_shader(void *data,
+                               enum rarch_shader_type type, const char *path)
+{
+   (void)type;
+   (void)data;
+   (void)path;
+   return false;
+}
+
 static void gl_core_set_viewport_wrapper(void *data, unsigned viewport_width,
                                          unsigned viewport_height, bool force_full, bool allow_rotate)
 {
@@ -468,8 +469,9 @@ static bool gl_core_frame(void *data, const void *frame,
    if (!gl)
       return false;
 
-   glClearColor(1.0f, 0.7f, 0.4f, 1.0f);
+   glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
    glClear(GL_COLOR_BUFFER_BIT);
+   gl_core_set_viewport(gl, video_info, frame_width, frame_height, false, true);
 
    video_info->cb_update_window_title(
          video_info->context_data, video_info);

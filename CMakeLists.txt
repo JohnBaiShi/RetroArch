@@ -78,6 +78,7 @@ target_compile_definitions(retroarch PRIVATE
 			HAVE_IBXM
 			HAVE_ZLIB
 			HAVE_CHD
+			GL_DEBUG
 			WANT_SUBCODE
 			WANT_RAW_DATA_SECTOR
 			HAVE_RTGA
