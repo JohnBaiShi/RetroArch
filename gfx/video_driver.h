@@ -1205,6 +1205,7 @@ bool video_driver_is_threaded(void);
 bool video_driver_get_all_flags(gfx_ctx_flags_t *flags,
       enum display_flags flag);
 
+extern video_driver_t video_gl_core;
 extern video_driver_t video_gl2;
 extern video_driver_t video_gl1;
 extern video_driver_t video_vulkan;
