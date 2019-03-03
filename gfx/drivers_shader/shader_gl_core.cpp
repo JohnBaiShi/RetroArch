@@ -1312,7 +1312,7 @@ void Pass::build_commands(
       glViewport(0, 0, current_viewport.width, current_viewport.height);
    }
 
-   if (framebuffer->get_format() == GL_SRGB8_ALPHA8)
+   if (framebuffer && framebuffer->get_format() == GL_SRGB8_ALPHA8)
       glEnable(GL_FRAMEBUFFER_SRGB);
    else
       glDisable(GL_FRAMEBUFFER_SRGB);
@@ -1334,6 +1334,11 @@ void Pass::build_commands(
 struct gl_core_filter_chain
 {
 public:
+   gl_core_filter_chain(unsigned num_passes)
+   {
+      set_num_passes(num_passes);
+   }
+
    inline void set_shader_preset(unique_ptr<video_shader> shader)
    {
       common.shader_preset = move(shader);
@@ -1362,6 +1367,7 @@ public:
 
    void add_static_texture(unique_ptr<gl_core::StaticTexture> texture);
    void add_parameter(unsigned pass, unsigned parameter_index, const std::string &id);
+   void set_num_passes(unsigned passes);
 
 private:
    vector<unique_ptr<gl_core::Pass>> passes;
@@ -1677,10 +1683,20 @@ void gl_core_filter_chain::set_pass_info(unsigned pass, const gl_core_filter_cha
    pass_info[pass] = info;
 }
 
+void gl_core_filter_chain::set_num_passes(unsigned num_passes)
+{
+   pass_info.resize(num_passes);
+   passes.reserve(num_passes);
+   for (unsigned i = 0; i < num_passes; i++)
+   {
+      passes.emplace_back(new gl_core::Pass(i + 1 == num_passes));
+      passes.back()->set_common_resources(&common);
+      passes.back()->set_pass_number(i);
+   }
+}
+
 void gl_core_filter_chain::set_shader(unsigned pass, GLenum stage, const uint32_t *spirv, size_t spirv_words)
 {
-   if (pass >= passes.size())
-      passes.resize(pass + 1);
    passes[pass]->set_shader(stage, spirv, spirv_words);
 }
 
@@ -1801,7 +1817,7 @@ gl_core_filter_chain_t *gl_core_filter_chain_create_default(
 {
    struct gl_core_filter_chain_pass_info pass_info;
 
-   unique_ptr<gl_core_filter_chain> chain{ new gl_core_filter_chain() };
+   unique_ptr<gl_core_filter_chain> chain{ new gl_core_filter_chain(1) };
    if (!chain)
       return nullptr;
 
@@ -1849,7 +1865,7 @@ gl_core_filter_chain_t *gl_core_filter_chain_create_from_preset(
 
    bool last_pass_is_fbo = shader->pass[shader->passes - 1].fbo.valid;
 
-   unique_ptr<gl_core_filter_chain> chain{ new gl_core_filter_chain() };
+   unique_ptr<gl_core_filter_chain> chain{ new gl_core_filter_chain(shader->passes + (last_pass_is_fbo ? 1 : 0)) };
    if (!chain)
       return nullptr;
 
