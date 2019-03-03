@@ -507,8 +507,9 @@ static void *gl_core_init(const video_info_t *video,
    if (!string_is_empty(version))
       sscanf(version, "%d.%d", &gl->version_major, &gl->version_minor);
 
-   gl->vsync      = video->vsync;
-   gl->fullscreen = video->fullscreen;
+   gl->vsync       = video->vsync;
+   gl->fullscreen  = video->fullscreen;
+   gl->keep_aspect = video->force_aspect;
 
    mode.width     = 0;
    mode.height    = 0;
