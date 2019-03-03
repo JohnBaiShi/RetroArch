@@ -192,8 +192,8 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       GLuint vertex_shader = gl_core_compile_shader(GL_VERTEX_SHADER, vertex_source);
       GLuint fragment_shader = gl_core_compile_shader(GL_FRAGMENT_SHADER, fragment_source);
 
-      RARCH_LOG("[GLCore]: Vertex shader:\n========\n%s\n=======\n", vertex_source.c_str());
-      RARCH_LOG("[GLCore]: Fragment shader:\n========\n%s\n=======\n", fragment_source.c_str());
+      //RARCH_LOG("[GLCore]: Vertex shader:\n========\n%s\n=======\n", vertex_source.c_str());
+      //RARCH_LOG("[GLCore]: Fragment shader:\n========\n%s\n=======\n", fragment_source.c_str());
 
       if (!vertex_shader || !fragment_shader)
       {

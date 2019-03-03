@@ -877,12 +877,45 @@ static void gl_core_update_cpu_texture(gl_core_t *gl,
 static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_info)
 {
    glEnable(GL_BLEND);
+   glDisable(GL_CULL_FACE);
+   glDisable(GL_DEPTH_TEST);
    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
    glBlendEquation(GL_FUNC_ADD);
 
    if (gl->menu_texture_full_screen)
       glViewport(0, 0, video_info->width, video_info->height);
+
+   glActiveTexture(GL_TEXTURE0 + 1);
    glBindTexture(GL_TEXTURE_2D, gl->menu_texture);
+
+   glUseProgram(gl->pipelines.alpha_blend);
+   if (gl->pipelines.alpha_blend_loc.ubo_vertex >= 0)
+      glUniform4fv(gl->pipelines.alpha_blend_loc.ubo_vertex, 4, gl->mvp_yflip.data);
+
+   const float vbo_data[] = {
+      -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      +1.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      -1.0f, +1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      +1.0f, +1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+   };
+
+   // Crude, some round-robin system might be good.
+   GLuint vbo;
+   glGenBuffers(1, &vbo);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+   glBufferData(GL_ARRAY_BUFFER, sizeof(vbo_data), vbo_data, GL_STREAM_DRAW);
+   glEnableVertexAttribArray(0);
+   glEnableVertexAttribArray(1);
+   glEnableVertexAttribArray(2);
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(uintptr_t)0);
+   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(uintptr_t)(2 * sizeof(float)));
+   glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(uintptr_t)(4 * sizeof(float)));
+   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+   glDisableVertexAttribArray(0);
+   glDisableVertexAttribArray(1);
+   glDisableVertexAttribArray(2);
+   glBindBuffer(GL_ARRAY_BUFFER, 0);
+   glDeleteBuffers(1, &vbo);
 
    glDisable(GL_BLEND);
 }
@@ -1169,7 +1202,7 @@ static void gl_core_set_texture_frame(void *data,
       glDeleteTextures(1, &gl->menu_texture);
    glGenTextures(1, &gl->menu_texture);
    glBindTexture(GL_TEXTURE_2D, gl->menu_texture);
-   glTexStorage2D(GL_TEXTURE_2D, 1, rgb32 ? GL_RGBA8 : GL_RGB565, width, height);
+   glTexStorage2D(GL_TEXTURE_2D, 1, rgb32 ? GL_RGBA8 : GL_RGBA4, width, height);
 
    glPixelStorei(GL_UNPACK_ALIGNMENT, base_size);
    glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
