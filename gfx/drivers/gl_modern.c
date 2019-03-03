@@ -75,6 +75,7 @@ typedef struct gl_core
    unsigned vp_out_height;
 
    math_matrix_4x4 mvp;
+   math_matrix_4x4 mvp_yflip;
    math_matrix_4x4 mvp_no_rot;
    unsigned rotation;
 
@@ -83,7 +84,7 @@ typedef struct gl_core
    unsigned textures_index;
 } gl_core_t;
 
-static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
+static const struct video_ortho default_ortho = {-1, 1, -1, 1, -1, 1};
 
 static void gl_core_destroy_resources(gl_core_t *gl)
 {
@@ -126,6 +127,7 @@ static const gfx_ctx_driver_t *gl_core_get_context(gl_core_t *gl)
    api   = GFX_CTX_OPENGL_API;
    major = 3;
    minor = 2;
+   gl_query_core_context_set(true);
 #endif
 
    gfx_ctx = video_context_driver_init_first(gl,
@@ -155,6 +157,11 @@ static void gl_core_set_projection(gl_core_t *gl,
 
    matrix_4x4_rotate_z(rot, M_PI * gl->rotation / 180.0f);
    matrix_4x4_multiply(gl->mvp, rot, gl->mvp_no_rot);
+   memcpy(gl->mvp_yflip.data, gl->mvp.data, sizeof(gl->mvp.data));
+   MAT_ELEM_4X4(gl->mvp_yflip, 1, 0) *= -1.0f;
+   MAT_ELEM_4X4(gl->mvp_yflip, 1, 1) *= -1.0f;
+   MAT_ELEM_4X4(gl->mvp_yflip, 1, 2) *= -1.0f;
+   MAT_ELEM_4X4(gl->mvp_yflip, 1, 3) *= -1.0f;
 }
 
 static void gl_core_set_viewport(gl_core_t *gl,
@@ -318,6 +325,107 @@ static bool gl_core_init_filter_chain(gl_core_t *gl)
    return true;
 }
 
+#ifdef GL_DEBUG
+#define DEBUG_CALLBACK_TYPE APIENTRY
+static void DEBUG_CALLBACK_TYPE gl_core_debug_cb(GLenum source, GLenum type,
+      GLuint id, GLenum severity, GLsizei length,
+      const GLchar *message, void *userParam)
+{
+   const char      *src = NULL;
+   const char *typestr  = NULL;
+   gl_core_t *gl = (gl_core_t*)userParam; /* Useful for debugger. */
+
+   (void)gl;
+   (void)id;
+   (void)length;
+
+   switch (source)
+   {
+      case GL_DEBUG_SOURCE_API:
+         src = "API";
+         break;
+      case GL_DEBUG_SOURCE_WINDOW_SYSTEM:
+         src = "Window system";
+         break;
+      case GL_DEBUG_SOURCE_SHADER_COMPILER:
+         src = "Shader compiler";
+         break;
+      case GL_DEBUG_SOURCE_THIRD_PARTY:
+         src = "3rd party";
+         break;
+      case GL_DEBUG_SOURCE_APPLICATION:
+         src = "Application";
+         break;
+      case GL_DEBUG_SOURCE_OTHER:
+         src = "Other";
+         break;
+      default:
+         src = "Unknown";
+         break;
+   }
+
+   switch (type)
+   {
+      case GL_DEBUG_TYPE_ERROR:
+         typestr = "Error";
+         break;
+      case GL_DEBUG_TYPE_DEPRECATED_BEHAVIOR:
+         typestr = "Deprecated behavior";
+         break;
+      case GL_DEBUG_TYPE_UNDEFINED_BEHAVIOR:
+         typestr = "Undefined behavior";
+         break;
+      case GL_DEBUG_TYPE_PORTABILITY:
+         typestr = "Portability";
+         break;
+      case GL_DEBUG_TYPE_PERFORMANCE:
+         typestr = "Performance";
+         break;
+      case GL_DEBUG_TYPE_MARKER:
+         typestr = "Marker";
+         break;
+      case GL_DEBUG_TYPE_PUSH_GROUP:
+         typestr = "Push group";
+         break;
+      case GL_DEBUG_TYPE_POP_GROUP:
+        typestr = "Pop group";
+        break;
+      case GL_DEBUG_TYPE_OTHER:
+        typestr = "Other";
+        break;
+      default:
+        typestr = "Unknown";
+        break;
+   }
+
+   switch (severity)
+   {
+      case GL_DEBUG_SEVERITY_HIGH:
+         RARCH_ERR("[GL debug (High, %s, %s)]: %s\n", src, typestr, message);
+         break;
+      case GL_DEBUG_SEVERITY_MEDIUM:
+         RARCH_WARN("[GL debug (Medium, %s, %s)]: %s\n", src, typestr, message);
+         break;
+      case GL_DEBUG_SEVERITY_LOW:
+         RARCH_LOG("[GL debug (Low, %s, %s)]: %s\n", src, typestr, message);
+         break;
+   }
+}
+
+static void gl_core_begin_debug(gl_core_t *gl)
+{
+   if (gl_check_capability(GL_CAPS_DEBUG))
+   {
+      glDebugMessageCallback(gl_core_debug_cb, gl);
+      glDebugMessageControl(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
+      glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS);
+      glEnable(GL_DEBUG_OUTPUT);
+   }
+   else
+      RARCH_ERR("[GL]: Neither GL_KHR_debug nor GL_ARB_debug_output are implemented. Cannot start GL debugging.\n");
+}
+#endif
+
 static void *gl_core_init(const video_info_t *video,
       const input_driver_t **input, void **input_data)
 {
@@ -378,6 +486,10 @@ static void *gl_core_init(const video_info_t *video,
       goto error;
 
    rglgen_resolve_symbols(ctx_driver->get_proc_address);
+
+#ifdef GL_DEBUG
+   gl_core_begin_debug(gl);
+#endif
 
    /* Clear out potential error flags in case we use cached context. */
    glGetError();
@@ -655,7 +767,7 @@ static bool gl_core_frame(void *data, const void *frame,
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
    glClear(GL_COLOR_BUFFER_BIT);
-   gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp.data);
+   gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp_yflip.data);
    gl_core_filter_chain_end_frame(gl->filter_chain);
 
    video_info->cb_update_window_title(

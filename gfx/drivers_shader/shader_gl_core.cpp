@@ -191,6 +191,9 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       GLuint vertex_shader = gl_core_compile_shader(GL_VERTEX_SHADER, vertex_source);
       GLuint fragment_shader = gl_core_compile_shader(GL_FRAGMENT_SHADER, fragment_source);
 
+      RARCH_LOG("[GLCore]: Vertex shader:\n========\n%s\n=======\n", vertex_source.c_str());
+      RARCH_LOG("[GLCore]: Fragment shader:\n========\n%s\n=======\n", fragment_source.c_str());
+
       if (!vertex_shader || !fragment_shader)
       {
          RARCH_ERR("[GLCore]: One or more shaders failed to compile.\n");
@@ -513,7 +516,7 @@ struct CommonResources
    GLuint quad_program = 0;
    GLuint quad_vbo = 0;
    GLint quad_ubo_index = 0;
-   void draw_quad(GLuint program) const;
+   void draw_quad() const;
 };
 
 CommonResources::CommonResources()
@@ -542,17 +545,8 @@ CommonResources::~CommonResources()
       glDeleteBuffers(1, &quad_vbo);
 }
 
-void CommonResources::draw_quad(GLuint program) const
+void CommonResources::draw_quad() const
 {
-   glUseProgram(program);
-
-   if (quad_ubo_index >= 0)
-   {
-      float mvp[16];
-      build_identity_matrix(mvp);
-      glUniform4fv(quad_ubo_index, 4, mvp);
-   }
-
    glDisable(GL_CULL_FACE);
    glDisable(GL_BLEND);
    glDisable(GL_DEPTH_TEST);
@@ -560,12 +554,11 @@ void CommonResources::draw_quad(GLuint program) const
    glEnableVertexAttribArray(1);
    glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
    glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void *>(uintptr_t(0)));
-   glVertexAttribPointer(1, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void *>(uintptr_t(4 * sizeof(float))));
+   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void *>(uintptr_t(4 * sizeof(float))));
    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
    glDisableVertexAttribArray(0);
    glDisableVertexAttribArray(1);
-   glUseProgram(0);
 }
 
 class Framebuffer
@@ -718,7 +711,16 @@ void Framebuffer::copy(const CommonResources &common, GLuint image)
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
    glViewport(0, 0, size.width, size.height);
    glClear(GL_COLOR_BUFFER_BIT);
-   common.draw_quad(common.quad_program);
+
+   glUseProgram(common.quad_program);
+   if (common.quad_ubo_index >= 0)
+   {
+      float mvp[16];
+      build_identity_matrix(mvp);
+      glUniform4fv(common.quad_ubo_index, 4, mvp);
+   }
+   common.draw_quad();
+   glUseProgram(0);
    glBindTexture(GL_TEXTURE_2D, 0);
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 }
@@ -1317,7 +1319,7 @@ void Pass::build_commands(
    else
       glDisable(GL_FRAMEBUFFER_SRGB);
 
-   common->draw_quad(pipeline);
+   common->draw_quad();
    glDisable(GL_FRAMEBUFFER_SRGB);
 
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
