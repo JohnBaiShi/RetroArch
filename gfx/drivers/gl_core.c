@@ -17,24 +17,16 @@
 #include "config.h"
 #endif
 
-#include <compat/strl.h>
-#include <gfx/scaler/scaler.h>
-#include <gfx/math/matrix_4x4.h>
-#include <formats/image.h>
-#include <retro_inline.h>
-#include <retro_miscellaneous.h>
-#include <retro_math.h>
-#include <string/stdstring.h>
-#include <libretro.h>
+#include "../common/gl_core_common.h"
 
 #include <gfx/gl_capabilities.h>
 #include <gfx/video_frame.h>
 #include <glsym/glsym.h>
+#include <string/stdstring.h>
 
 #include "../../configuration.h"
 #include "../../dynamic.h"
 #include "../../record/record_driver.h"
-#include "../drivers_shader/shader_gl_core.h"
 
 #include "../../retroarch.h"
 #include "../../verbosity.h"
@@ -44,68 +36,6 @@
 #endif
 
 #include "../font_driver.h"
-
-#define GL_CORE_NUM_TEXTURES 4
-struct gl_core_streamed_texture
-{
-   GLuint tex;
-   unsigned width;
-   unsigned height;
-};
-
-typedef struct gl_core
-{
-   const gfx_ctx_driver_t *ctx_driver;
-   void *ctx_data;
-   gl_core_filter_chain_t *filter_chain;
-
-   video_info_t video_info;
-
-   bool vsync;
-   bool fullscreen;
-   bool quitting;
-   bool should_resize;
-   bool keep_aspect;
-   unsigned version_major;
-   unsigned version_minor;
-
-   video_viewport_t vp;
-   struct gl_core_viewport filter_chain_vp;
-   unsigned vp_out_width;
-   unsigned vp_out_height;
-
-   math_matrix_4x4 mvp;
-   math_matrix_4x4 mvp_yflip;
-   math_matrix_4x4 mvp_no_rot;
-   unsigned rotation;
-
-   GLuint vao;
-   struct gl_core_streamed_texture textures[GL_CORE_NUM_TEXTURES];
-   unsigned textures_index;
-
-   GLuint menu_texture;
-   float menu_texture_alpha;
-   bool menu_texture_enable;
-   bool menu_texture_full_screen;
-
-   struct
-   {
-      GLuint alpha_blend;
-      GLuint font;
-      GLuint ribbon;
-      GLuint ribbon_simple;
-      GLuint snow_simple;
-      GLuint snow;
-      GLuint bokeh;
-      struct gl_core_buffer_locations alpha_blend_loc;
-      struct gl_core_buffer_locations font_loc;
-      struct gl_core_buffer_locations ribbon_loc;
-      struct gl_core_buffer_locations ribbon_simple_loc;
-      struct gl_core_buffer_locations snow_simple_loc;
-      struct gl_core_buffer_locations snow_loc;
-      struct gl_core_buffer_locations bokeh_loc;
-   } pipelines;
-} gl_core_t;
 
 static const struct video_ortho default_ortho = {-1, 1, -1, 1, -1, 1};
 
@@ -198,6 +128,13 @@ static void gl_core_set_projection(gl_core_t *gl,
 
    matrix_4x4_rotate_z(rot, M_PI * gl->rotation / 180.0f);
    matrix_4x4_multiply(gl->mvp, rot, gl->mvp_no_rot);
+
+   memcpy(gl->mvp_no_rot_yflip.data, gl->mvp_no_rot.data, sizeof(gl->mvp_no_rot.data));
+   MAT_ELEM_4X4(gl->mvp_no_rot_yflip, 1, 0) *= -1.0f;
+   MAT_ELEM_4X4(gl->mvp_no_rot_yflip, 1, 1) *= -1.0f;
+   MAT_ELEM_4X4(gl->mvp_no_rot_yflip, 1, 2) *= -1.0f;
+   MAT_ELEM_4X4(gl->mvp_no_rot_yflip, 1, 3) *= -1.0f;
+
    memcpy(gl->mvp_yflip.data, gl->mvp.data, sizeof(gl->mvp.data));
    MAT_ELEM_4X4(gl->mvp_yflip, 1, 0) *= -1.0f;
    MAT_ELEM_4X4(gl->mvp_yflip, 1, 1) *= -1.0f;
@@ -673,6 +610,13 @@ static void *gl_core_init(const video_info_t *video,
       goto error;
    }
 
+   if (video->font_enable)
+   {
+      font_driver_init_osd(gl, false,
+                           video->is_threaded,
+                           FONT_DRIVER_RENDER_OPENGL_CORE_API);
+   }
+
    glGenVertexArrays(1, &gl->vao);
    glBindVertexArray(gl->vao);
 
@@ -890,7 +834,7 @@ static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_i
 
    glUseProgram(gl->pipelines.alpha_blend);
    if (gl->pipelines.alpha_blend_loc.ubo_vertex >= 0)
-      glUniform4fv(gl->pipelines.alpha_blend_loc.ubo_vertex, 4, gl->mvp_yflip.data);
+      glUniform4fv(gl->pipelines.alpha_blend_loc.ubo_vertex, 4, gl->mvp_no_rot_yflip.data);
 
    const float vbo_data[] = {
       -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
@@ -951,8 +895,36 @@ static bool gl_core_frame(void *data, const void *frame,
    gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp_yflip.data);
    gl_core_filter_chain_end_frame(gl->filter_chain);
 
-   if (gl->menu_texture_enable && gl->menu_texture)
-      gl_core_draw_menu_texture(gl, video_info);
+#if defined(HAVE_MENU)
+   if (gl->menu_texture_enable)
+   {
+      //menu_driver_frame(video_info);
+      if (gl->menu_texture_enable && gl->menu_texture)
+         gl_core_draw_menu_texture(gl, video_info);
+   }
+   else if (video_info->statistics_show)
+   {
+      struct font_params *osd_params = (struct font_params*)
+         &video_info->osd_stat_params;
+
+      if (osd_params)
+      {
+         font_driver_render_msg(video_info, NULL, video_info->stat_text,
+               (const struct font_params*)&video_info->osd_stat_params);
+      }
+   }
+
+#ifdef HAVE_MENU_WIDGETS
+   menu_widgets_frame(video_info);
+#endif
+#endif
+
+   if (!string_is_empty(msg))
+   {
+      //if (video_info->msg_bgcolor_enable)
+      //   gl_core_render_osd_background(gl, video_info, msg);
+      font_driver_render_msg(video_info, NULL, msg, NULL);
+   }
 
    video_info->cb_update_window_title(
          video_info->context_data, video_info);
