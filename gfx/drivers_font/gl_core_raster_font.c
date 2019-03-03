@@ -30,8 +30,8 @@
 /* TODO: Move viewport side effects to the caller: it's a source of bugs. */
 
 #define gl_core_raster_font_emit(c, vx, vy) do { \
-   font_vertex[     2 * (6 * i + c) + 0] = 2.0f * (x + (delta_x + off_x + vx * width) * scale) * inv_win_width - 1.0f; \
-   font_vertex[     2 * (6 * i + c) + 1] = 2.0f * (y + (delta_y - off_y - vy * height) * scale) * inv_win_height - 1.0f; \
+   font_vertex[     2 * (6 * i + c) + 0] = (x + (delta_x + off_x + vx * width) * scale) * inv_win_width; \
+   font_vertex[     2 * (6 * i + c) + 1] = (y + (delta_y - off_y - vy * height) * scale) * inv_win_height; \
    font_tex_coords[ 2 * (6 * i + c) + 0] = (tex_x + vx * width) * inv_tex_size_x; \
    font_tex_coords[ 2 * (6 * i + c) + 1] = (tex_y + vy * height) * inv_tex_size_y; \
    font_color[      4 * (6 * i + c) + 0] = color[0]; \

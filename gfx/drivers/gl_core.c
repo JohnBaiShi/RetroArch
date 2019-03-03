@@ -37,7 +37,14 @@
 
 #include "../font_driver.h"
 
-static const struct video_ortho default_ortho = {-1, 1, -1, 1, -1, 1};
+#ifdef HAVE_MENU
+#include "../../menu/menu_driver.h"
+#ifdef HAVE_MENU_WIDGETS
+#include "../../menu/widgets/menu_widgets.h"
+#endif
+#endif
+
+static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
 
 static void gl_core_destroy_resources(gl_core_t *gl)
 {
@@ -837,10 +844,10 @@ static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_i
       glUniform4fv(gl->pipelines.alpha_blend_loc.ubo_vertex, 4, gl->mvp_no_rot_yflip.data);
 
    const float vbo_data[] = {
-      -1.0f, -1.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
-      +1.0f, -1.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
-      -1.0f, +1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
-      +1.0f, +1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      0.0f, 1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
+      1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
    };
 
    // Crude, some round-robin system might be good.
@@ -898,7 +905,7 @@ static bool gl_core_frame(void *data, const void *frame,
 #if defined(HAVE_MENU)
    if (gl->menu_texture_enable)
    {
-      //menu_driver_frame(video_info);
+      menu_driver_frame(video_info);
       if (gl->menu_texture_enable && gl->menu_texture)
          gl_core_draw_menu_texture(gl, video_info);
    }
@@ -1059,7 +1066,7 @@ static void video_texture_load_gl_core(
          break;
    }
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, min_filter);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
 
    glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
    glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);

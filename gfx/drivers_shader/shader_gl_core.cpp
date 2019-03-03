@@ -291,22 +291,22 @@ static unsigned num_miplevels(unsigned width, unsigned height)
    return levels;
 }
 
-static void build_identity_matrix(float *data)
+static void build_default_matrix(float *data)
 {
-   data[0] = 1.0f;
+   data[0] = 2.0f;
    data[1] = 0.0f;
    data[2] = 0.0f;
    data[3] = 0.0f;
    data[4] = 0.0f;
-   data[5] = 1.0f;
+   data[5] = 2.0f;
    data[6] = 0.0f;
    data[7] = 0.0f;
    data[8] = 0.0f;
    data[9] = 0.0f;
-   data[10] = 1.0f;
+   data[10] = 2.0f;
    data[11] = 0.0f;
-   data[12] = 0.0f;
-   data[13] = 0.0f;
+   data[12] = -1.0f;
+   data[13] = -1.0f;
    data[14] = 0.0f;
    data[15] = 1.0f;
 }
@@ -528,10 +528,10 @@ struct CommonResources
 CommonResources::CommonResources()
 {
    static float quad_data[] = {
-      -1.0f, -1.0f, 0.0f, 1.0f, 0.0f, 0.0f, 0.0f, 0.0f,
-      +1.0f, -1.0f, 0.0f, 1.0f, 1.0f, 0.0f, 0.0f, 0.0f,
-      -1.0f, +1.0f, 0.0f, 1.0f, 0.0f, 1.0f, 0.0f, 0.0f,
-      +1.0f, +1.0f, 0.0f, 1.0f, 1.0f, 1.0f, 0.0f, 0.0f,
+      0.0f, 0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, 1.0f, 0.0f,
+      0.0f, 1.0f, 0.0f, 1.0f,
+      1.0f, 1.0f, 1.0f, 1.0f,
    };
 
    glGenBuffers(1, &quad_vbo);
@@ -539,7 +539,8 @@ CommonResources::CommonResources()
    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STATIC_DRAW);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-   quad_program = gl_core_cross_compile_program(opaque_vert, sizeof(opaque_vert), opaque_frag, sizeof(opaque_frag), &quad_loc);
+   quad_program = gl_core_cross_compile_program(opaque_vert, sizeof(opaque_vert),
+                                                opaque_frag, sizeof(opaque_frag), &quad_loc);
 }
 
 CommonResources::~CommonResources()
@@ -558,8 +559,10 @@ void CommonResources::draw_quad() const
    glEnableVertexAttribArray(0);
    glEnableVertexAttribArray(1);
    glBindBuffer(GL_ARRAY_BUFFER, quad_vbo);
-   glVertexAttribPointer(0, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void *>(uintptr_t(0)));
-   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), reinterpret_cast<void *>(uintptr_t(4 * sizeof(float))));
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                         reinterpret_cast<void *>(uintptr_t(0)));
+   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                         reinterpret_cast<void *>(uintptr_t(2 * sizeof(float))));
    glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
    glDisableVertexAttribArray(0);
@@ -721,7 +724,7 @@ void Framebuffer::copy(const CommonResources &common, GLuint image)
    if (common.quad_loc.ubo_vertex >= 0)
    {
       float mvp[16];
-      build_identity_matrix(mvp);
+      build_default_matrix(mvp);
       glUniform4fv(common.quad_loc.ubo_vertex, 4, mvp);
    }
    common.draw_quad();
@@ -1181,7 +1184,7 @@ void Pass::build_semantics(uint8_t *buffer,
       if (mvp)
          memcpy(buffer + offset, mvp, sizeof(float) * 16);
       else
-         build_identity_matrix(reinterpret_cast<float *>(buffer + offset));
+         build_default_matrix(reinterpret_cast<float *>(buffer + offset));
    }
 
    if (reflection.semantics[SLANG_SEMANTIC_MVP].push_constant)
@@ -1190,7 +1193,7 @@ void Pass::build_semantics(uint8_t *buffer,
       if (mvp)
          memcpy(push_constant_buffer.data() + (offset >> 2), mvp, sizeof(float) * 16);
       else
-         build_identity_matrix(reinterpret_cast<float *>(push_constant_buffer.data() + (offset >> 2)));
+         build_default_matrix(reinterpret_cast<float *>(push_constant_buffer.data() + (offset >> 2)));
    }
 
    /* Output information */
