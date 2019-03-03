@@ -136,8 +136,17 @@ struct video_shader *gl_core_filter_chain_get_preset(
 
 void gl_core_filter_chain_end_frame(gl_core_filter_chain_t *chain);
 
+struct gl_core_buffer_locations
+{
+   GLint ubo_vertex;
+   GLint push_constant_vertex;
+   GLint ubo_fragment;
+   GLint push_constant_fragment;
+};
+
 GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
-                                     const uint32_t *fragment, size_t fragment_size);
+                                     const uint32_t *fragment, size_t fragment_size,
+                                     struct gl_core_buffer_locations *loc);
 
 RETRO_END_DECLS
 

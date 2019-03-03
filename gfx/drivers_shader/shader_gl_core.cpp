@@ -80,7 +80,8 @@ static GLuint gl_core_compile_shader(GLenum stage, const string &source)
 }
 
 GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
-                                     const uint32_t *fragment, size_t fragment_size)
+                                     const uint32_t *fragment, size_t fragment_size,
+                                     gl_core_buffer_locations *loc)
 {
    GLuint program = 0;
    try
@@ -129,8 +130,8 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       for (auto &res : vertex_resources.push_constant_buffers)
       {
          vertex_compiler.flatten_buffer_block(res.id);
-         vertex_compiler.set_name(res.id, "RARCH_PUSH");
-         vertex_compiler.set_name(res.base_type_id, "RARCH_PUSH");
+         vertex_compiler.set_name(res.id, "RARCH_PUSH_VERTEX");
+         vertex_compiler.set_name(res.base_type_id, "RARCH_PUSH_VERTEX");
       }
 
       if (vertex_resources.uniform_buffers.size() > 1)
@@ -142,8 +143,8 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       for (auto &res : vertex_resources.uniform_buffers)
       {
          vertex_compiler.flatten_buffer_block(res.id);
-         vertex_compiler.set_name(res.id, "RARCH_UBO");
-         vertex_compiler.set_name(res.base_type_id, "RARCH_UBO");
+         vertex_compiler.set_name(res.id, "RARCH_UBO_VERTEX");
+         vertex_compiler.set_name(res.base_type_id, "RARCH_UBO_VERTEX");
          vertex_compiler.unset_decoration(res.id, spv::DecorationDescriptorSet);
          vertex_compiler.unset_decoration(res.id, spv::DecorationBinding);
       }
@@ -157,8 +158,8 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       for (auto &res : fragment_resources.push_constant_buffers)
       {
          fragment_compiler.flatten_buffer_block(res.id);
-         fragment_compiler.set_name(res.id, "RARCH_PUSH");
-         fragment_compiler.set_name(res.base_type_id, "RARCH_PUSH");
+         fragment_compiler.set_name(res.id, "RARCH_PUSH_FRAGMENT");
+         fragment_compiler.set_name(res.base_type_id, "RARCH_PUSH_FRAGMENT");
       }
 
       if (fragment_resources.uniform_buffers.size() > 1)
@@ -170,8 +171,8 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       for (auto &res : fragment_resources.uniform_buffers)
       {
          fragment_compiler.flatten_buffer_block(res.id);
-         fragment_compiler.set_name(res.id, "RARCH_UBO");
-         fragment_compiler.set_name(res.base_type_id, "RARCH_UBO");
+         fragment_compiler.set_name(res.id, "RARCH_UBO_FRAGMENT");
+         fragment_compiler.set_name(res.base_type_id, "RARCH_UBO_FRAGMENT");
          fragment_compiler.unset_decoration(res.id, spv::DecorationDescriptorSet);
          fragment_compiler.unset_decoration(res.id, spv::DecorationBinding);
       }
@@ -233,6 +234,11 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       }
 
       glUseProgram(program);
+
+      loc->ubo_vertex = glGetUniformLocation(program, "RARCH_UBO_VERTEX");
+      loc->ubo_fragment = glGetUniformLocation(program, "RARCH_UBO_FRAGMENT");
+      loc->push_constant_vertex = glGetUniformLocation(program, "RARCH_PUSH_VERTEX");
+      loc->push_constant_fragment = glGetUniformLocation(program, "RARCH_PUSH_FRAGMENT");
 
       // Force proper bindings for textures.
       for (auto &binding : texture_binding_fixups)
@@ -515,7 +521,7 @@ struct CommonResources
 
    GLuint quad_program = 0;
    GLuint quad_vbo = 0;
-   GLint quad_ubo_index = 0;
+   gl_core_buffer_locations quad_loc = {};
    void draw_quad() const;
 };
 
@@ -533,8 +539,7 @@ CommonResources::CommonResources()
    glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STATIC_DRAW);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
 
-   quad_program = gl_core_cross_compile_program(opaque_vert, sizeof(opaque_vert), opaque_frag, sizeof(opaque_frag));
-   quad_ubo_index = glGetUniformLocation(quad_program, "RARCH_UBO");
+   quad_program = gl_core_cross_compile_program(opaque_vert, sizeof(opaque_vert), opaque_frag, sizeof(opaque_frag), &quad_loc);
 }
 
 CommonResources::~CommonResources()
@@ -713,11 +718,11 @@ void Framebuffer::copy(const CommonResources &common, GLuint image)
    glClear(GL_COLOR_BUFFER_BIT);
 
    glUseProgram(common.quad_program);
-   if (common.quad_ubo_index >= 0)
+   if (common.quad_loc.ubo_vertex >= 0)
    {
       float mvp[16];
       build_identity_matrix(mvp);
-      glUniform4fv(common.quad_ubo_index, 4, mvp);
+      glUniform4fv(common.quad_loc.ubo_vertex, 4, mvp);
    }
    common.draw_quad();
    glUseProgram(0);
@@ -858,7 +863,6 @@ private:
    slang_reflection reflection;
 
    std::vector<uint8_t> uniforms;
-   GLint uniforms_location = -1;
 
    void build_semantics(uint8_t *buffer,
                         const float *mvp, const Texture &original, const Texture &source);
@@ -894,7 +898,7 @@ private:
    vector<Parameter> parameters;
    vector<Parameter> filtered_parameters;
    vector<uint32_t> push_constant_buffer;
-   GLint push_constant_buffer_location = -1;
+   gl_core_buffer_locations locations = {};
 };
 
 bool Pass::build()
@@ -948,13 +952,11 @@ bool Pass::build()
 bool Pass::init_pipeline()
 {
    pipeline = gl_core_cross_compile_program(vertex_shader.data(), vertex_shader.size() * sizeof(uint32_t),
-                                            fragment_shader.data(), fragment_shader.size() * sizeof(uint32_t));
+                                            fragment_shader.data(), fragment_shader.size() * sizeof(uint32_t), &locations);
 
    if (!pipeline)
       return false;
 
-   uniforms_location = glGetUniformLocation(pipeline, "RARCH_UBO");
-   push_constant_buffer_location = glGetUniformLocation(pipeline, "RARCH_PUSH");
    uniforms.resize(reflection.ubo_size);
    push_constant_buffer.resize(reflection.push_constant_size);
    return true;
@@ -1278,16 +1280,30 @@ void Pass::build_commands(
 
    glUseProgram(pipeline);
 
-   if (uniforms_location >= 0)
+   if (locations.ubo_vertex >= 0)
    {
-      glUniform4fv(uniforms_location,
+      glUniform4fv(locations.ubo_vertex,
                    GLsizei((reflection.ubo_size + 15) / 16),
                    reinterpret_cast<const float *>(uniforms.data()));
    }
 
-   if (push_constant_buffer_location >= 0)
+   if (locations.ubo_fragment >= 0)
    {
-      glUniform4fv(push_constant_buffer_location,
+      glUniform4fv(locations.ubo_fragment,
+                   GLsizei((reflection.ubo_size + 15) / 16),
+                   reinterpret_cast<const float *>(uniforms.data()));
+   }
+
+   if (locations.push_constant_vertex >= 0)
+   {
+      glUniform4fv(locations.push_constant_vertex,
+                   GLsizei((reflection.push_constant_size + 15) / 16),
+                   reinterpret_cast<const float *>(push_constant_buffer.data()));
+   }
+
+   if (locations.push_constant_fragment >= 0)
+   {
+      glUniform4fv(locations.push_constant_fragment,
                    GLsizei((reflection.push_constant_size + 15) / 16),
                    reinterpret_cast<const float *>(push_constant_buffer.data()));
    }
@@ -1777,6 +1793,10 @@ static unique_ptr<gl_core::StaticTexture> gl_core_filter_chain_load_lut(
    glBindTexture(GL_TEXTURE_2D, tex);
    glTexStorage2D(GL_TEXTURE_2D, levels,
                   GL_RGBA8, image.width, image.height);
+
+   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
    glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
                    image.width, image.height,
                    GL_RGBA, GL_UNSIGNED_BYTE, image.pixels);

@@ -82,6 +82,29 @@ typedef struct gl_core
    GLuint vao;
    struct gl_core_streamed_texture textures[GL_CORE_NUM_TEXTURES];
    unsigned textures_index;
+
+   GLuint menu_texture;
+   float menu_texture_alpha;
+   bool menu_texture_enable;
+   bool menu_texture_full_screen;
+
+   struct
+   {
+      GLuint alpha_blend;
+      GLuint font;
+      GLuint ribbon;
+      GLuint ribbon_simple;
+      GLuint snow_simple;
+      GLuint snow;
+      GLuint bokeh;
+      struct gl_core_buffer_locations alpha_blend_loc;
+      struct gl_core_buffer_locations font_loc;
+      struct gl_core_buffer_locations ribbon_loc;
+      struct gl_core_buffer_locations ribbon_simple_loc;
+      struct gl_core_buffer_locations snow_simple_loc;
+      struct gl_core_buffer_locations snow_loc;
+      struct gl_core_buffer_locations bokeh_loc;
+   } pipelines;
 } gl_core_t;
 
 static const struct video_ortho default_ortho = {-1, 1, -1, 1, -1, 1};
@@ -106,6 +129,24 @@ static void gl_core_destroy_resources(gl_core_t *gl)
          glDeleteTextures(1, &gl->textures[i].tex);
    }
    memset(gl->textures, 0, sizeof(gl->textures));
+
+   if (gl->menu_texture != 0)
+      glDeleteTextures(1, &gl->menu_texture);
+
+   if (gl->pipelines.alpha_blend)
+      glDeleteProgram(gl->pipelines.alpha_blend);
+   if (gl->pipelines.font)
+      glDeleteProgram(gl->pipelines.font);
+   if (gl->pipelines.ribbon)
+      glDeleteProgram(gl->pipelines.ribbon);
+   if (gl->pipelines.ribbon_simple)
+      glDeleteProgram(gl->pipelines.ribbon_simple);
+   if (gl->pipelines.snow_simple)
+      glDeleteProgram(gl->pipelines.snow_simple);
+   if (gl->pipelines.snow)
+      glDeleteProgram(gl->pipelines.snow);
+   if (gl->pipelines.bokeh)
+      glDeleteProgram(gl->pipelines.bokeh);
 
    free(gl);
 }
@@ -265,6 +306,93 @@ static void gl_core_set_viewport(gl_core_t *gl,
 #if 0
    RARCH_LOG("Setting viewport @ %ux%u\n", viewport_width, viewport_height);
 #endif
+}
+
+static bool gl_core_init_pipelines(gl_core_t *gl)
+{
+   static const uint32_t alpha_blend_vert[] =
+#include "vulkan_shaders/alpha_blend.vert.inc"
+      ;
+
+   static const uint32_t alpha_blend_frag[] =
+#include "vulkan_shaders/alpha_blend.frag.inc"
+      ;
+
+   static const uint32_t font_frag[] =
+#include "vulkan_shaders/font.frag.inc"
+      ;
+
+   static const uint32_t pipeline_ribbon_vert[] =
+#include "vulkan_shaders/pipeline_ribbon.vert.inc"
+      ;
+
+   static const uint32_t pipeline_ribbon_frag[] =
+#include "vulkan_shaders/pipeline_ribbon.frag.inc"
+      ;
+
+   static const uint32_t pipeline_ribbon_simple_vert[] =
+#include "vulkan_shaders/pipeline_ribbon_simple.vert.inc"
+      ;
+
+   static const uint32_t pipeline_ribbon_simple_frag[] =
+#include "vulkan_shaders/pipeline_ribbon_simple.frag.inc"
+      ;
+
+   static const uint32_t pipeline_snow_simple_frag[] =
+#include "vulkan_shaders/pipeline_snow_simple.frag.inc"
+      ;
+
+   static const uint32_t pipeline_snow_frag[] =
+#include "vulkan_shaders/pipeline_snow.frag.inc"
+      ;
+
+   static const uint32_t pipeline_bokeh_frag[] =
+#include "vulkan_shaders/pipeline_bokeh.frag.inc"
+      ;
+
+   gl->pipelines.alpha_blend = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
+                                                             alpha_blend_frag, sizeof(alpha_blend_frag),
+                                                             &gl->pipelines.alpha_blend_loc);
+   if (!gl->pipelines.alpha_blend)
+      return false;
+
+   gl->pipelines.font = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
+                                                      font_frag, sizeof(font_frag),
+                                                      &gl->pipelines.font_loc);
+   if (!gl->pipelines.font)
+      return false;
+
+   gl->pipelines.ribbon_simple = gl_core_cross_compile_program(pipeline_ribbon_simple_vert, sizeof(pipeline_ribbon_simple_vert),
+                                                               pipeline_ribbon_simple_frag, sizeof(pipeline_ribbon_simple_frag),
+                                                               &gl->pipelines.ribbon_simple_loc);
+   if (!gl->pipelines.ribbon_simple)
+      return false;
+
+   gl->pipelines.ribbon = gl_core_cross_compile_program(pipeline_ribbon_vert, sizeof(pipeline_ribbon_vert),
+                                                        pipeline_ribbon_frag, sizeof(pipeline_ribbon_frag),
+                                                        &gl->pipelines.ribbon_loc);
+   if (!gl->pipelines.ribbon)
+      return false;
+
+   gl->pipelines.bokeh = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
+                                                       pipeline_bokeh_frag, sizeof(pipeline_bokeh_frag),
+                                                       &gl->pipelines.bokeh_loc);
+   if (!gl->pipelines.bokeh)
+      return false;
+
+   gl->pipelines.snow_simple = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
+                                                             pipeline_snow_simple_frag, sizeof(pipeline_snow_simple_frag),
+                                                             &gl->pipelines.snow_simple_loc);
+   if (!gl->pipelines.snow_simple)
+      return false;
+
+   gl->pipelines.snow = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
+                                                      pipeline_snow_frag, sizeof(pipeline_snow_frag),
+                                                      &gl->pipelines.snow_loc);
+   if (!gl->pipelines.snow)
+      return false;
+
+   return true;
 }
 
 static bool gl_core_init_default_filter_chain(gl_core_t *gl)
@@ -504,6 +632,12 @@ static void *gl_core_init(const video_info_t *video,
    if (string_is_equal(ctx_driver->ident, "null"))
       goto error;
 
+   if (!gl_core_init_pipelines(gl))
+   {
+      RARCH_ERR("[GLCore]: Failed to cross-compile menu pipelines.\n");
+      goto error;
+   }
+
    if (!string_is_empty(version))
       sscanf(version, "%d.%d", &gl->version_major, &gl->version_minor);
 
@@ -740,6 +874,19 @@ static void gl_core_update_cpu_texture(gl_core_t *gl,
    }
 }
 
+static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_info)
+{
+   glEnable(GL_BLEND);
+   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+   glBlendEquation(GL_FUNC_ADD);
+
+   if (gl->menu_texture_full_screen)
+      glViewport(0, 0, video_info->width, video_info->height);
+   glBindTexture(GL_TEXTURE_2D, gl->menu_texture);
+
+   glDisable(GL_BLEND);
+}
+
 static bool gl_core_frame(void *data, const void *frame,
                           unsigned frame_width, unsigned frame_height,
                           uint64_t frame_count,
@@ -770,6 +917,9 @@ static bool gl_core_frame(void *data, const void *frame,
    glClear(GL_COLOR_BUFFER_BIT);
    gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp_yflip.data);
    gl_core_filter_chain_end_frame(gl->filter_chain);
+
+   if (gl->menu_texture_enable && gl->menu_texture)
+      gl_core_draw_menu_texture(gl, video_info);
 
    video_info->cb_update_window_title(
          video_info->context_data, video_info);
@@ -846,13 +996,219 @@ static struct video_shader *gl_core_get_current_shader(void *data)
    return gl_core_filter_chain_get_preset(gl->filter_chain);
 }
 
+static unsigned num_miplevels(unsigned width, unsigned height)
+{
+   unsigned levels = 1;
+   if (width < height)
+      width = height;
+   while (width > 1)
+   {
+      levels++;
+      width >>= 1;
+   }
+   return levels;
+}
+
+static void video_texture_load_gl_core(
+      struct texture_image *ti,
+      enum texture_filter_type filter_type,
+      uintptr_t *idptr)
+{
+   /* Generate the OpenGL texture object */
+   GLuint id;
+   unsigned levels;
+   GLenum mag_filter, min_filter;
+
+   glGenTextures(1, &id);
+   *idptr = id;
+   glBindTexture(GL_TEXTURE_2D, id);
+
+   levels = 1;
+   if (filter_type == TEXTURE_FILTER_MIPMAP_LINEAR || filter_type == TEXTURE_FILTER_MIPMAP_NEAREST)
+      levels = num_miplevels(ti->width, ti->height);
+
+   glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, ti->width, ti->height);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+   switch (filter_type)
+   {
+      case TEXTURE_FILTER_LINEAR:
+         mag_filter = GL_LINEAR;
+         min_filter = GL_LINEAR;
+         break;
+
+      case TEXTURE_FILTER_NEAREST:
+         mag_filter = GL_NEAREST;
+         min_filter = GL_NEAREST;
+         break;
+
+      case TEXTURE_FILTER_MIPMAP_NEAREST:
+         mag_filter = GL_LINEAR;
+         min_filter = GL_LINEAR_MIPMAP_NEAREST;
+         break;
+
+      case TEXTURE_FILTER_MIPMAP_LINEAR:
+         mag_filter = GL_LINEAR;
+         min_filter = GL_LINEAR_MIPMAP_LINEAR;
+         break;
+   }
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, min_filter);
+
+   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                   ti->width, ti->height, GL_RGBA, GL_UNSIGNED_BYTE, ti->pixels);
+
+   if (levels > 1)
+      glGenerateMipmap(GL_TEXTURE_2D);
+   glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+#ifdef HAVE_THREADS
+static int video_texture_load_wrap_gl_core_mipmap(void *data)
+{
+   uintptr_t id = 0;
+
+   if (!data)
+      return 0;
+   video_texture_load_gl_core((struct texture_image*)data,
+         TEXTURE_FILTER_MIPMAP_LINEAR, &id);
+   return (int)id;
+}
+
+static int video_texture_load_wrap_gl_core(void *data)
+{
+   uintptr_t id = 0;
+
+   if (!data)
+      return 0;
+   video_texture_load_gl_core((struct texture_image*)data,
+         TEXTURE_FILTER_LINEAR, &id);
+   return (int)id;
+}
+#endif
+
+static uintptr_t gl_core_load_texture(void *video_data, void *data,
+                                      bool threaded, enum texture_filter_type filter_type)
+{
+   uintptr_t id = 0;
+
+#ifdef HAVE_THREADS
+   if (threaded)
+   {
+      custom_command_method_t func = video_texture_load_wrap_gl_core;
+
+      switch (filter_type)
+      {
+         case TEXTURE_FILTER_MIPMAP_LINEAR:
+         case TEXTURE_FILTER_MIPMAP_NEAREST:
+            func = video_texture_load_wrap_gl_core_mipmap;
+            break;
+         default:
+            break;
+      }
+      return video_thread_texture_load(data, func);
+   }
+#endif
+
+   video_texture_load_gl_core((struct texture_image*)data, filter_type, &id);
+   return id;
+}
+
+static void gl_core_unload_texture(void *data, uintptr_t id)
+{
+   GLuint glid;
+   if (!id)
+      return;
+
+   glid = (GLuint)id;
+   glDeleteTextures(1, &glid);
+}
+
+static void gl_core_set_video_mode(void *data, unsigned width, unsigned height,
+                                   bool fullscreen)
+{
+   gfx_ctx_mode_t mode;
+
+   mode.width      = width;
+   mode.height     = height;
+   mode.fullscreen = fullscreen;
+
+   video_context_driver_set_video_mode(&mode);
+}
+
+static void gl_core_show_mouse(void *data, bool state)
+{
+   video_context_driver_show_mouse(&state);
+}
+
+static void gl_core_set_osd_msg(void *data,
+                                video_frame_info_t *video_info,
+                                const char *msg,
+                                const void *params, void *font)
+{
+   font_driver_render_msg(video_info, font, msg, (const struct font_params *)params);
+}
+
+static void gl_core_set_texture_frame(void *data,
+      const void *frame, bool rgb32, unsigned width, unsigned height,
+      float alpha)
+{
+   GLenum menu_filter;
+   settings_t *settings = config_get_ptr();
+   unsigned base_size   = rgb32 ? sizeof(uint32_t) : sizeof(uint16_t);
+   gl_core_t *gl        = (gl_core_t*)data;
+   if (!gl)
+      return;
+
+   menu_filter = settings->bools.menu_linear_filter ? GL_LINEAR : GL_NEAREST;
+
+   if (gl->menu_texture)
+      glDeleteTextures(1, &gl->menu_texture);
+   glGenTextures(1, &gl->menu_texture);
+   glBindTexture(GL_TEXTURE_2D, gl->menu_texture);
+   glTexStorage2D(GL_TEXTURE_2D, 1, rgb32 ? GL_RGBA8 : GL_RGB565, width, height);
+
+   glPixelStorei(GL_UNPACK_ALIGNMENT, base_size);
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                   width, height, GL_RGBA, rgb32 ? GL_UNSIGNED_BYTE : GL_UNSIGNED_SHORT_4_4_4_4, frame);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, menu_filter);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, menu_filter);
+
+   if (rgb32)
+   {
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+      glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+   }
+
+   glBindTexture(GL_TEXTURE_2D, 0);
+   gl->menu_texture_alpha = alpha;
+}
+
+static void gl_core_set_texture_enable(void *data, bool state, bool full_screen)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+
+   if (!gl)
+      return;
+
+   gl->menu_texture_enable      = state;
+   gl->menu_texture_full_screen = full_screen;
+}
+
 static const video_poke_interface_t gl_core_poke_interface = {
    gl_core_get_flags,
    NULL,                   /* set_coords */
    NULL,                   /* set_mvp */
-   /*gl_core_load_texture*/NULL,
-   /*gl_core_unload_texture*/NULL,
-   /*gl_core_set_video_mode*/NULL,
+   gl_core_load_texture,
+   gl_core_unload_texture,
+   gl_core_set_video_mode,
    gl_core_get_refresh_rate, /* get_refresh_rate */
    NULL,
    NULL,
@@ -862,14 +1218,14 @@ static const video_poke_interface_t gl_core_poke_interface = {
    NULL,
    gl_core_set_aspect_ratio,
    gl_core_apply_state_changes,
-   /*gl_core_set_texture_frame*/NULL,
-   /*gl_core_set_texture_enable*/NULL,
-   /*gl_core_set_osd_msg*/NULL,
-   /*gl_core_show_mouse*/NULL,
+   gl_core_set_texture_frame,
+   gl_core_set_texture_enable,
+   gl_core_set_osd_msg,
+   gl_core_show_mouse,
    NULL,                               /* grab_mouse_toggle */
    gl_core_get_current_shader,
-   /*gl_core_get_current_sw_framebuffer*/NULL,
-   /*gl_core_get_hw_render_interface*/NULL,
+   NULL,
+   NULL,
 };
 
 static void gl_core_get_poke_interface(void *data,
@@ -906,12 +1262,10 @@ video_driver_t video_gl_core = {
 #endif
 
 #ifdef HAVE_OVERLAY
-   /*gl_core_get_overlay_interface,*/
-   NULL,
+   /*gl_core_get_overlay_interface,*/NULL,
 #endif
    gl_core_get_poke_interface,
-   /*gl_core_wrap_type_to_enum,*/
-   NULL,
+   /*gl_core_wrap_type_to_enum,*/NULL,
 #if defined(HAVE_MENU) && defined(HAVE_MENU_WIDGETS)
    gl_core_menu_widgets_enabled
 #endif
