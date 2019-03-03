@@ -600,6 +600,12 @@ static void gl_core_update_cpu_texture(gl_core_t *gl,
                      width, height);
       streamed->width = width;
       streamed->height = height;
+
+      if (gl->video_info.rgb32)
+      {
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+         glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+      }
    }
    else
       glBindTexture(GL_TEXTURE_2D, streamed->tex);
@@ -636,6 +642,8 @@ static bool gl_core_frame(void *data, const void *frame,
    streamed = &gl->textures[gl->textures_index];
    gl_core_update_cpu_texture(gl, streamed, frame, frame_width, frame_height, pitch);
 
+   gl_core_set_viewport(gl, video_info, video_info->width, video_info->height, false, true);
+
    memset(&texture, 0, sizeof(texture));
    texture.image  = streamed->tex;
    texture.width  = streamed->width;
@@ -647,7 +655,6 @@ static bool gl_core_frame(void *data, const void *frame,
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
    glClear(GL_COLOR_BUFFER_BIT);
-   gl_core_set_viewport(gl, video_info, frame_width, frame_height, false, true);
    gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp.data);
    gl_core_filter_chain_end_frame(gl->filter_chain);
 
@@ -657,6 +664,106 @@ static bool gl_core_frame(void *data, const void *frame,
 
    gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
    return true;
+}
+
+static uint32_t gl_core_get_flags(void *data)
+{
+   uint32_t flags = 0;
+
+   BIT32_SET(flags, GFX_CTX_FLAGS_CUSTOMIZABLE_SWAPCHAIN_IMAGES);
+   BIT32_SET(flags, GFX_CTX_FLAGS_BLACK_FRAME_INSERTION);
+   BIT32_SET(flags, GFX_CTX_FLAGS_MENU_FRAME_FILTERING);
+
+   return flags;
+}
+
+static float gl_core_get_refresh_rate(void *data)
+{
+   float refresh_rate;
+   if (video_context_driver_get_refresh_rate(&refresh_rate))
+       return refresh_rate;
+   return 0.0f;
+}
+
+static void gl_core_set_aspect_ratio(void *data, unsigned aspect_ratio_idx)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+
+   switch (aspect_ratio_idx)
+   {
+      case ASPECT_RATIO_SQUARE:
+         video_driver_set_viewport_square_pixel();
+         break;
+
+      case ASPECT_RATIO_CORE:
+         video_driver_set_viewport_core();
+         break;
+
+      case ASPECT_RATIO_CONFIG:
+         video_driver_set_viewport_config();
+         break;
+
+      default:
+         break;
+   }
+
+   video_driver_set_aspect_ratio_value(
+         aspectratio_lut[aspect_ratio_idx].value);
+
+   if (!gl)
+      return;
+
+   gl->keep_aspect = true;
+   gl->should_resize = true;
+}
+
+static void gl_core_apply_state_changes(void *data)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+   if (gl)
+      gl->should_resize = true;
+}
+
+static struct video_shader *gl_core_get_current_shader(void *data)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+   if (!gl || !gl->filter_chain)
+      return NULL;
+
+   return gl_core_filter_chain_get_preset(gl->filter_chain);
+}
+
+static const video_poke_interface_t gl_core_poke_interface = {
+   gl_core_get_flags,
+   NULL,                   /* set_coords */
+   NULL,                   /* set_mvp */
+   /*gl_core_load_texture*/NULL,
+   /*gl_core_unload_texture*/NULL,
+   /*gl_core_set_video_mode*/NULL,
+   gl_core_get_refresh_rate, /* get_refresh_rate */
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   NULL,
+   gl_core_set_aspect_ratio,
+   gl_core_apply_state_changes,
+   /*gl_core_set_texture_frame*/NULL,
+   /*gl_core_set_texture_enable*/NULL,
+   /*gl_core_set_osd_msg*/NULL,
+   /*gl_core_show_mouse*/NULL,
+   NULL,                               /* grab_mouse_toggle */
+   gl_core_get_current_shader,
+   /*gl_core_get_current_sw_framebuffer*/NULL,
+   /*gl_core_get_hw_render_interface*/NULL,
+};
+
+static void gl_core_get_poke_interface(void *data,
+      const video_poke_interface_t **iface)
+{
+   (void)data;
+   *iface = &gl_core_poke_interface;
 }
 
 video_driver_t video_gl_core = {
@@ -689,8 +796,7 @@ video_driver_t video_gl_core = {
    /*gl_core_get_overlay_interface,*/
    NULL,
 #endif
-   /*gl_core_get_poke_interface,*/
-   NULL,
+   gl_core_get_poke_interface,
    /*gl_core_wrap_type_to_enum,*/
    NULL,
 #if defined(HAVE_MENU) && defined(HAVE_MENU_WIDGETS)
