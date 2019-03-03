@@ -1311,7 +1311,7 @@ void Pass::build_commands(
    }
    else
    {
-      glViewport(0, 0, current_viewport.width, current_viewport.height);
+      glViewport(0, 0, size.width, size.height);
    }
 
    if (framebuffer && framebuffer->get_format() == GL_SRGB8_ALPHA8)
