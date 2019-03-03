@@ -129,7 +129,6 @@ gl_core_filter_chain_t *gl_core_filter_chain_create_default(
       enum gl_core_filter_chain_filter filter);
 
 gl_core_filter_chain_t *gl_core_filter_chain_create_from_preset(
-      const struct gl_core_filter_chain_create_info *info,
       const char *path, enum gl_core_filter_chain_filter filter);
 
 struct video_shader *gl_core_filter_chain_get_preset(

@@ -401,7 +401,7 @@ static GLenum convert_glslang_format(glslang_format fmt)
       FMT(R8G8B8A8_UNORM, RGBA8);
       FMT(R8G8B8A8_SINT, RGBA8I);
       FMT(R8G8B8A8_UINT, RGBA8UI);
-      FMT(R8G8B8A8_SRGB, SRGB8);
+      FMT(R8G8B8A8_SRGB, SRGB8_ALPHA8);
 
       FMT(A2B10G10R10_UNORM_PACK32, RGB10_A2);
       FMT(A2B10G10R10_UINT_PACK32, RGB10_A2UI);
@@ -1312,7 +1312,14 @@ void Pass::build_commands(
       glViewport(0, 0, current_viewport.width, current_viewport.height);
    }
 
+   if (framebuffer->get_format() == GL_SRGB8_ALPHA8)
+      glEnable(GL_FRAMEBUFFER_SRGB);
+   else
+      glDisable(GL_FRAMEBUFFER_SRGB);
+
    common->draw_quad(pipeline);
+   glDisable(GL_FRAMEBUFFER_SRGB);
+
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
    if (!final_pass)
@@ -1789,9 +1796,41 @@ static bool gl_core_filter_chain_load_luts(
    return true;
 }
 
+gl_core_filter_chain_t *gl_core_filter_chain_create_default(
+      gl_core_filter_chain_filter filter)
+{
+   struct gl_core_filter_chain_pass_info pass_info;
+
+   unique_ptr<gl_core_filter_chain> chain{ new gl_core_filter_chain() };
+   if (!chain)
+      return nullptr;
+
+   pass_info.scale_type_x  = GL_CORE_FILTER_CHAIN_SCALE_VIEWPORT;
+   pass_info.scale_type_y  = GL_CORE_FILTER_CHAIN_SCALE_VIEWPORT;
+   pass_info.scale_x       = 1.0f;
+   pass_info.scale_y       = 1.0f;
+   pass_info.rt_format     = 0;
+   pass_info.source_filter = filter;
+   pass_info.mip_filter    = GL_CORE_FILTER_CHAIN_NEAREST;
+   pass_info.address       = GL_CORE_FILTER_CHAIN_ADDRESS_CLAMP_TO_EDGE;
+   pass_info.max_levels    = 0;
+
+   chain->set_pass_info(0, pass_info);
+
+   chain->set_shader(0, GL_VERTEX_SHADER,
+         gl_core::opaque_vert,
+         sizeof(gl_core::opaque_vert) / sizeof(uint32_t));
+   chain->set_shader(0, GL_FRAGMENT_SHADER,
+         gl_core::opaque_frag,
+         sizeof(gl_core::opaque_frag) / sizeof(uint32_t));
+
+   if (!chain->init())
+      return nullptr;
+
+   return chain.release();
+}
 
 gl_core_filter_chain_t *gl_core_filter_chain_create_from_preset(
-      const struct gl_core_filter_chain_create_info *info,
       const char *path, gl_core_filter_chain_filter filter)
 {
    unsigned i;

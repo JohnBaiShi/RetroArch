@@ -34,6 +34,7 @@
 #include "../../configuration.h"
 #include "../../dynamic.h"
 #include "../../record/record_driver.h"
+#include "../drivers_shader/shader_gl_core.h"
 
 #include "../../retroarch.h"
 #include "../../verbosity.h"
@@ -44,10 +45,19 @@
 
 #include "../font_driver.h"
 
+#define GL_CORE_NUM_TEXTURES 4
+struct gl_core_streamed_texture
+{
+   GLuint tex;
+   unsigned width;
+   unsigned height;
+};
+
 typedef struct gl_core
 {
    const gfx_ctx_driver_t *ctx_driver;
    void *ctx_data;
+   gl_core_filter_chain_t *filter_chain;
 
    video_info_t video_info;
 
@@ -60,20 +70,41 @@ typedef struct gl_core
    unsigned version_minor;
 
    video_viewport_t vp;
+   struct gl_core_viewport filter_chain_vp;
    unsigned vp_out_width;
    unsigned vp_out_height;
 
    math_matrix_4x4 mvp;
    math_matrix_4x4 mvp_no_rot;
    unsigned rotation;
+
+   GLuint vao;
+   struct gl_core_streamed_texture textures[GL_CORE_NUM_TEXTURES];
+   unsigned textures_index;
 } gl_core_t;
 
 static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
 
 static void gl_core_destroy_resources(gl_core_t *gl)
 {
+   int i;
    if (!gl)
       return;
+
+   if (gl->filter_chain)
+      gl_core_filter_chain_free(gl->filter_chain);
+   gl->filter_chain = NULL;
+
+   glBindVertexArray(0);
+   if (gl->vao != 0)
+      glDeleteVertexArrays(1, &gl->vao);
+
+   for (i = 0; i < GL_CORE_NUM_TEXTURES; i++)
+   {
+      if (gl->textures[i].tex != 0)
+         glDeleteTextures(1, &gl->textures[i].tex);
+   }
+   memset(gl->textures, 0, sizeof(gl->textures));
 
    free(gl);
 }
@@ -219,9 +250,72 @@ static void gl_core_set_viewport(gl_core_t *gl,
       gl->vp_out_height = viewport_height;
    }
 
+   gl->filter_chain_vp.x = gl->vp.x;
+   gl->filter_chain_vp.y = gl->vp.y;
+   gl->filter_chain_vp.width = gl->vp.width;
+   gl->filter_chain_vp.height = gl->vp.height;
+
 #if 0
    RARCH_LOG("Setting viewport @ %ux%u\n", viewport_width, viewport_height);
 #endif
+}
+
+static bool gl_core_init_default_filter_chain(gl_core_t *gl)
+{
+   if (!gl->ctx_driver)
+      return false;
+
+   gl->filter_chain = gl_core_filter_chain_create_default(
+         gl->video_info.smooth ?
+         GL_CORE_FILTER_CHAIN_LINEAR : GL_CORE_FILTER_CHAIN_NEAREST);
+
+   if (!gl->filter_chain)
+   {
+      RARCH_ERR("Failed to create filter chain.\n");
+      return false;
+   }
+
+   return true;
+}
+
+static bool gl_core_init_filter_chain_preset(gl_core_t *gl, const char *shader_path)
+{
+   gl->filter_chain = gl_core_filter_chain_create_from_preset(
+         shader_path,
+         gl->video_info.smooth ?
+         GL_CORE_FILTER_CHAIN_LINEAR : GL_CORE_FILTER_CHAIN_NEAREST);
+
+   if (!gl->filter_chain)
+   {
+      RARCH_ERR("[Vulkan]: Failed to create preset: \"%s\".\n", shader_path);
+      return false;
+   }
+
+   return true;
+}
+
+static bool gl_core_init_filter_chain(gl_core_t *gl)
+{
+   const char *shader_path = retroarch_get_shader_preset();
+
+   enum rarch_shader_type type = video_shader_parse_type(shader_path, RARCH_SHADER_NONE);
+
+   if (type == RARCH_SHADER_NONE)
+   {
+      RARCH_LOG("[GLCore]: Loading stock shader.\n");
+      return gl_core_init_default_filter_chain(gl);
+   }
+
+   if (type != RARCH_SHADER_SLANG)
+   {
+      RARCH_LOG("[GLCore]: Only SLANG shaders are supported, falling back to stock.\n");
+      return gl_core_init_default_filter_chain(gl);
+   }
+
+   if (!shader_path || !gl_core_init_filter_chain_preset(gl, shader_path))
+      gl_core_init_default_filter_chain(gl);
+
+   return true;
 }
 
 static void *gl_core_init(const video_info_t *video,
@@ -247,8 +341,8 @@ static void *gl_core_init(const video_info_t *video,
 
    video_context_driver_set(ctx_driver);
 
-   gl->ctx_driver                       = ctx_driver;
-   gl->video_info                       = *video;
+   gl->ctx_driver = ctx_driver;
+   gl->video_info = *video;
 
    RARCH_LOG("[GLCore]: Found GL context: %s\n", ctx_driver->ident);
 
@@ -326,6 +420,15 @@ static void *gl_core_init(const video_info_t *video,
    inp.input_data = input_data;
    video_context_driver_input_driver(&inp);
 
+   if (!gl_core_init_filter_chain(gl))
+   {
+      RARCH_ERR("[GLCore]: Failed to init filter chain.\n");
+      goto error;
+   }
+
+   glGenVertexArrays(1, &gl->vao);
+   glBindVertexArray(gl->vao);
+
    return gl;
 
 error:
@@ -400,10 +503,34 @@ static bool gl_core_suppress_screensaver(void *data, bool enable)
 static bool gl_core_set_shader(void *data,
                                enum rarch_shader_type type, const char *path)
 {
-   (void)type;
-   (void)data;
-   (void)path;
-   return false;
+   gl_core_t *gl = (gl_core_t *)data;
+   if (!gl)
+      return false;
+
+   if (type != RARCH_SHADER_SLANG && path)
+   {
+      RARCH_WARN("[GLCore]: Only .slang or .slangp shaders are supported. Falling back to stock.\n");
+      path = NULL;
+   }
+
+   if (gl->filter_chain)
+      gl_core_filter_chain_free(gl->filter_chain);
+   gl->filter_chain = NULL;
+
+   if (!path)
+   {
+      gl_core_init_default_filter_chain(gl);
+      return true;
+   }
+
+   if (!gl_core_init_filter_chain_preset(gl, path))
+   {
+      RARCH_ERR("[Vulkan]: Failed to create filter chain: \"%s\". Falling back to stock.\n", path);
+      gl_core_init_default_filter_chain(gl);
+      return false;
+   }
+
+   return true;
 }
 
 static void gl_core_set_viewport_wrapper(void *data, unsigned viewport_width,
@@ -459,23 +586,76 @@ static bool gl_core_read_viewport(void *data, uint8_t *buffer, bool is_idle)
    return false;
 }
 
+static void gl_core_update_cpu_texture(gl_core_t *gl,
+                                       struct gl_core_streamed_texture *streamed,
+                                       const void *frame, unsigned width, unsigned height, unsigned pitch)
+{
+   if (width != streamed->width || height != streamed->height)
+   {
+      if (streamed->tex != 0)
+         glDeleteTextures(1, &streamed->tex);
+      glGenTextures(1, &streamed->tex);
+      glBindTexture(GL_TEXTURE_2D, streamed->tex);
+      glTexStorage2D(GL_TEXTURE_2D, 1, gl->video_info.rgb32 ? GL_RGBA8 : GL_RGB565,
+                     width, height);
+      streamed->width = width;
+      streamed->height = height;
+   }
+   else
+      glBindTexture(GL_TEXTURE_2D, streamed->tex);
+
+   glBindBuffer(GL_PIXEL_UNPACK_BUFFER, 0);
+   if (gl->video_info.rgb32)
+   {
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, pitch >> 2);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                      width, height, GL_RGBA, GL_UNSIGNED_BYTE, frame);
+   }
+   else
+   {
+      glPixelStorei(GL_UNPACK_ROW_LENGTH, pitch >> 1);
+      glPixelStorei(GL_UNPACK_ALIGNMENT, 2);
+      glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                      width, height, GL_RGB, GL_UNSIGNED_SHORT_5_6_5, frame);
+   }
+}
+
 static bool gl_core_frame(void *data, const void *frame,
                           unsigned frame_width, unsigned frame_height,
                           uint64_t frame_count,
                           unsigned pitch, const char *msg,
                           video_frame_info_t *video_info)
 {
+   struct gl_core_filter_chain_texture texture;
+   struct gl_core_streamed_texture *streamed;
    gl_core_t *gl = (gl_core_t*)data;
    if (!gl)
       return false;
 
+   streamed = &gl->textures[gl->textures_index];
+   gl_core_update_cpu_texture(gl, streamed, frame, frame_width, frame_height, pitch);
+
+   memset(&texture, 0, sizeof(texture));
+   texture.image  = streamed->tex;
+   texture.width  = streamed->width;
+   texture.height = streamed->height;
+   texture.format = gl->video_info.rgb32 ? GL_RGBA8 : GL_RGB565;
+   gl_core_filter_chain_set_input_texture(gl->filter_chain, &texture);
+   gl_core_filter_chain_build_offscreen_passes(gl->filter_chain, &gl->filter_chain_vp);
+
+   glBindFramebuffer(GL_FRAMEBUFFER, 0);
    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
    glClear(GL_COLOR_BUFFER_BIT);
    gl_core_set_viewport(gl, video_info, frame_width, frame_height, false, true);
+   gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp.data);
+   gl_core_filter_chain_end_frame(gl->filter_chain);
 
    video_info->cb_update_window_title(
          video_info->context_data, video_info);
    video_info->cb_swap_buffers(video_info->context_data, video_info);
+
+   gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
    return true;
 }
 
