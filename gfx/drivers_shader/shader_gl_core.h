@@ -49,6 +49,8 @@ struct gl_core_filter_chain_texture
    GLuint image;
    unsigned width;
    unsigned height;
+   unsigned padded_width;
+   unsigned padded_height;
    GLenum format;
 };
 

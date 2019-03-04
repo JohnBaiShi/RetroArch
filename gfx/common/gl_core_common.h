@@ -111,6 +111,15 @@ typedef struct gl_core
 
    GLuint scratch_vbos[GL_CORE_NUM_VBOS];
    unsigned scratch_vbo_index;
+
+   bool use_shared_context;
+   GLuint hw_render_texture;
+   GLuint hw_render_fbo;
+   GLuint hw_render_rb_ds;
+   bool hw_render_enable;
+   unsigned hw_render_max_width;
+   unsigned hw_render_max_height;
+   bool hw_render_bottom_left;
 } gl_core_t;
 
 void gl_core_bind_scratch_vbo(gl_core_t *gl, const void *data, size_t size);

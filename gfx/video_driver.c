@@ -992,7 +992,7 @@ static bool video_driver_init_internal(bool *video_is_threaded)
          else
             width  = roundf(geom->base_width   * settings->floats.video_scale);
          height = roundf(geom->base_height * settings->floats.video_scale);
-}
+      }
    }
 
    if (width && height)
@@ -1924,7 +1924,11 @@ bool video_driver_find_driver(void)
       if (hwr && hw_render_context_is_gl(hwr->context_type))
       {
          RARCH_LOG("[Video]: Using HW render, OpenGL driver forced.\n");
+#if defined(HAVE_OPENGL_CORE) && 1
+         current_video = &video_gl_core;
+#else
          current_video = &video_gl2;
+#endif
       }
 #endif
 

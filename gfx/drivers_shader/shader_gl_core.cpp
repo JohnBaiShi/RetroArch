@@ -616,6 +616,7 @@ public:
 
    void clear();
    void copy(const CommonResources &common, GLuint image);
+   void copy_partial(const CommonResources &common, GLuint image, float rx, float ry);
 
    unsigned get_levels() const { return levels; }
    void generate_mips();
@@ -746,7 +747,7 @@ void Framebuffer::copy(const CommonResources &common, GLuint image)
       return;
 
    glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
-   glActiveTexture(GL_TEXTURE0);
+   glActiveTexture(GL_TEXTURE2);
    glBindTexture(GL_TEXTURE_2D, image);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
@@ -763,6 +764,61 @@ void Framebuffer::copy(const CommonResources &common, GLuint image)
       glUniform4fv(common.quad_loc.flat_ubo_vertex, 4, mvp);
    }
    common.draw_quad();
+   glUseProgram(0);
+   glBindTexture(GL_TEXTURE_2D, 0);
+   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+}
+
+void Framebuffer::copy_partial(const CommonResources &common, GLuint image, float rx, float ry)
+{
+   if (!complete)
+      return;
+
+   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
+   glActiveTexture(GL_TEXTURE2);
+   glBindTexture(GL_TEXTURE_2D, image);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+   glViewport(0, 0, size.width, size.height);
+   glClear(GL_COLOR_BUFFER_BIT);
+
+   glUseProgram(common.quad_program);
+   if (common.quad_loc.flat_ubo_vertex >= 0)
+   {
+      float mvp[16];
+      build_default_matrix(mvp);
+      glUniform4fv(common.quad_loc.flat_ubo_vertex, 4, mvp);
+   }
+   glDisable(GL_CULL_FACE);
+   glDisable(GL_BLEND);
+   glDisable(GL_DEPTH_TEST);
+   glEnableVertexAttribArray(0);
+   glEnableVertexAttribArray(1);
+
+   // A bit crude, but heeeey.
+   GLuint vbo;
+   glGenBuffers(1, &vbo);
+   glBindBuffer(GL_ARRAY_BUFFER, vbo);
+
+   const float quad_data[] = {
+      0.0f, 0.0f, 0.0f, 0.0f,
+      1.0f, 0.0f, rx, 0.0f,
+      0.0f, 1.0f, 0.0f, ry,
+      1.0f, 1.0f, rx, ry,
+   };
+
+   glBufferData(GL_ARRAY_BUFFER, sizeof(quad_data), quad_data, GL_STREAM_DRAW);
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                         reinterpret_cast<void *>(uintptr_t(0)));
+   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 4 * sizeof(float),
+                         reinterpret_cast<void *>(uintptr_t(2 * sizeof(float))));
+   glDrawArrays(GL_TRIANGLE_STRIP, 0, 4);
+   glBindBuffer(GL_ARRAY_BUFFER, 0);
+   glDeleteBuffers(1, &vbo);
+   glDisableVertexAttribArray(0);
+   glDisableVertexAttribArray(1);
    glUseProgram(0);
    glBindTexture(GL_TEXTURE_2D, 0);
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
@@ -1669,6 +1725,7 @@ private:
    vector<unique_ptr<gl_core::Pass>> passes;
    vector<gl_core_filter_chain_pass_info> pass_info;
    vector<vector<function<void ()>>> deferred_calls;
+   std::unique_ptr<gl_core::Framebuffer> copy_framebuffer;
    gl_core::CommonResources common;
 
    gl_core_filter_chain_texture input_texture = {};
@@ -2031,6 +2088,27 @@ void gl_core_filter_chain::set_input_texture(
       const gl_core_filter_chain_texture &texture)
 {
    input_texture = texture;
+
+   // Need a copy to remove padding.
+   // GL HW render interface in libretro is kinda garbage now ...
+   if (input_texture.padded_width != input_texture.width ||
+       input_texture.padded_height != input_texture.height)
+   {
+      if (!copy_framebuffer)
+         copy_framebuffer.reset(new gl_core::Framebuffer(texture.format, 1));
+
+      if (input_texture.width != copy_framebuffer->get_size().width ||
+          input_texture.height != copy_framebuffer->get_size().height ||
+          (input_texture.format != 0 && input_texture.format != copy_framebuffer->get_format()))
+      {
+         copy_framebuffer->set_size({ input_texture.width, input_texture.height }, input_texture.format);
+      }
+
+      copy_framebuffer->copy_partial(common, input_texture.image,
+                                     float(input_texture.width) / input_texture.padded_width,
+                                     float(input_texture.height) / input_texture.padded_height);
+      input_texture.image = copy_framebuffer->get_image();
+   }
 }
 
 void gl_core_filter_chain::add_static_texture(unique_ptr<gl_core::StaticTexture> texture)

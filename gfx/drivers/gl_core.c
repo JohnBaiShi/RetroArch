@@ -187,6 +187,30 @@ static void gl_core_render_overlay(gl_core_t *gl, video_frame_info_t *video_info
 }
 #endif
 
+static void gl_core_context_bind_hw_render(gl_core_t *gl, bool enable)
+{
+   if (gl->use_shared_context && gl->ctx_driver->bind_hw_render)
+      gl->ctx_driver->bind_hw_render(gl->ctx_data, enable);
+}
+
+static void gl_core_deinit_hw_render(gl_core_t *gl)
+{
+   gl_core_context_bind_hw_render(gl, true);
+
+   if (gl->hw_render_fbo)
+      glDeleteFramebuffers(1, &gl->hw_render_fbo);
+   if (gl->hw_render_rb_ds)
+      glDeleteRenderbuffers(1, &gl->hw_render_rb_ds);
+   if (gl->hw_render_texture)
+      glDeleteTextures(1, &gl->hw_render_texture);
+
+   gl->hw_render_fbo = 0;
+   gl->hw_render_rb_ds = 0;
+   gl->hw_render_texture = 0;
+   gl_core_context_bind_hw_render(gl, false);
+   gl->hw_render_enable = false;
+}
+
 static void gl_core_destroy_resources(gl_core_t *gl)
 {
    int i;
@@ -228,7 +252,62 @@ static void gl_core_destroy_resources(gl_core_t *gl)
 
    gl_core_free_overlay(gl);
    gl_core_free_scratch_vbos(gl);
+   gl_core_deinit_hw_render(gl);
    free(gl);
+}
+
+static bool gl_core_init_hw_render(gl_core_t *gl, unsigned width, unsigned height)
+{
+   GLint max_fbo_size;
+   GLint max_rb_size;
+   GLenum status;
+   struct retro_hw_render_callback *hwr = video_driver_get_hw_context();
+   gl_core_context_bind_hw_render(gl, true);
+
+   RARCH_LOG("[GLCore]: Initializing HW render (%u x %u).\n", width, height);
+   glGetIntegerv(GL_MAX_TEXTURE_SIZE, &max_fbo_size);
+   glGetIntegerv(GL_MAX_RENDERBUFFER_SIZE, &max_rb_size);
+   RARCH_LOG("[GLCore]: Max texture size: %d px, renderbuffer size: %d px.\n",
+             max_fbo_size, max_rb_size);
+
+   glGenFramebuffers(1, &gl->hw_render_fbo);
+   glBindFramebuffer(GL_FRAMEBUFFER, gl->hw_render_fbo);
+   glGenTextures(1, &gl->hw_render_texture);
+   glBindTexture(GL_TEXTURE_2D, gl->hw_render_texture);
+   glTexStorage2D(GL_TEXTURE_2D, 1, GL_RGBA8, width, height);
+   glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, gl->hw_render_texture, 0);
+
+   gl->hw_render_rb_ds = 0;
+   gl->hw_render_bottom_left = hwr->bottom_left_origin;
+   if (hwr->depth)
+   {
+      glGenRenderbuffers(1, &gl->hw_render_rb_ds);
+      glRenderbufferStorage(GL_RENDERBUFFER, hwr->stencil ? GL_DEPTH24_STENCIL8 : GL_DEPTH_COMPONENT16,
+                            width, height);
+
+      if (hwr->stencil)
+         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_STENCIL_ATTACHMENT, GL_RENDERBUFFER, gl->hw_render_rb_ds);
+      else
+         glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, gl->hw_render_rb_ds);
+   }
+
+   status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
+   if (status != GL_FRAMEBUFFER_COMPLETE)
+   {
+      RARCH_ERR("[GLCore]: Framebuffer is not complete.\n");
+      gl_core_context_bind_hw_render(gl, false);
+      return false;
+   }
+
+   gl->hw_render_enable = true;
+   gl->hw_render_max_width = width;
+   gl->hw_render_max_height = height;
+   glBindTexture(GL_TEXTURE_2D, 0);
+   glBindRenderbuffer(GL_RENDERBUFFER, 0);
+   glBindFramebuffer(GL_FRAMEBUFFER, 0);
+   gl_core_context_bind_hw_render(gl, false);
+
+   return true;
 }
 
 static const gfx_ctx_driver_t *gl_core_get_context(gl_core_t *gl)
@@ -239,25 +318,56 @@ static const gfx_ctx_driver_t *gl_core_get_context(gl_core_t *gl)
    settings_t                 *settings = config_get_ptr();
    unsigned major;
    unsigned minor;
+   gfx_ctx_flags_t flags;
+   struct retro_hw_render_callback *hwr = video_driver_get_hw_context();
 
 #ifdef HAVE_OPENGLES3
    api = GFX_CTX_OPENGL_ES_API;
    major = 3;
    minor = 0;
+   if (hwr && hwr->context_type == RETRO_HW_CONTEXT_OPENGLES_VERSION)
+   {
+      major = hwr->version_major;
+      minor = hwr->version_minor;
+   }
 #else
    api   = GFX_CTX_OPENGL_API;
-   major = 3;
-   minor = 2;
-   gl_query_core_context_set(true);
+   if (hwr)
+   {
+      major = hwr->version_major;
+      minor = hwr->version_minor;
+      gl_query_core_context_set(hwr->context_type == RETRO_HW_CONTEXT_OPENGL_CORE);
+      if (hwr->context_type == RETRO_HW_CONTEXT_OPENGL_CORE)
+      {
+         flags.flags = 0;
+         BIT32_SET(flags.flags, GFX_CTX_FLAGS_GL_CORE_CONTEXT);
+         video_context_driver_set_flags(&flags);
+      }
+   }
+   else
+   {
+      major = 3;
+      minor = 2;
+      gl_query_core_context_set(true);
+      flags.flags = 0;
+      BIT32_SET(flags.flags, GFX_CTX_FLAGS_GL_CORE_CONTEXT);
+      video_context_driver_set_flags(&flags);
+   }
 #endif
+
+   /* Force shared context. */
+   gl->use_shared_context = hwr->context_type != RETRO_HW_CONTEXT_NONE;
 
    gfx_ctx = video_context_driver_init_first(gl,
          settings->arrays.video_context_driver,
-         api, major, minor, false, &ctx_data);
+         api, major, minor, gl->use_shared_context, &ctx_data);
 
    if (ctx_data)
       gl->ctx_data = ctx_data;
 
+   /* Need to force here since video_context_driver_init also checks for global option. */
+   if (gfx_ctx->bind_hw_render)
+      gfx_ctx->bind_hw_render(ctx_data, gl->use_shared_context);
    return gfx_ctx;
 }
 
@@ -687,6 +797,7 @@ static void *gl_core_init(const video_info_t *video,
    const char *version                  = NULL;
    gl_core_t *gl                        = (gl_core_t*)calloc(1, sizeof(gl_core_t));
    const gfx_ctx_driver_t *ctx_driver   = gl_core_get_context(gl);
+   struct retro_hw_render_callback *hwr = video_driver_get_hw_context();
 
    if (!gl || !ctx_driver)
       goto error;
@@ -731,8 +842,17 @@ static void *gl_core_init(const video_info_t *video,
 
    rglgen_resolve_symbols(ctx_driver->get_proc_address);
 
+   if (hwr && hwr->context_type != RETRO_HW_CONTEXT_NONE)
+      gl_core_init_hw_render(gl, RARCH_SCALE_BASE * video->input_scale, RARCH_SCALE_BASE * video->input_scale);
+
 #ifdef GL_DEBUG
    gl_core_begin_debug(gl);
+   if (gl->hw_render_enable)
+   {
+      gl_core_context_bind_hw_render(gl, true);
+      gl_core_begin_debug(gl);
+      gl_core_context_bind_hw_render(gl, false);
+   }
 #endif
 
    /* Clear out potential error flags in case we use cached context. */
@@ -992,6 +1112,7 @@ static void gl_core_free(void *data)
    if (!gl)
       return;
 
+   gl_core_context_bind_hw_render(gl, false);
    font_driver_free_osd();
    video_context_driver_free();
    gl_core_destroy_resources(gl);
@@ -1037,10 +1158,12 @@ static void gl_core_set_nonblock_state(void *data, bool state)
 
    RARCH_LOG("[GLCore]: VSync => %s\n", state ? "off" : "on");
 
+   gl_core_context_bind_hw_render(gl, false);
    if (!state)
       interval = settings->uints.video_swap_interval;
 
    video_context_driver_swap_interval(&interval);
+   gl_core_context_bind_hw_render(gl, true);
 }
 
 static bool gl_core_suppress_screensaver(void *data, bool enable)
@@ -1056,9 +1179,11 @@ static bool gl_core_set_shader(void *data,
    if (!gl)
       return false;
 
+   gl_core_context_bind_hw_render(gl, false);
    if (type != RARCH_SHADER_SLANG && path)
    {
       RARCH_WARN("[GLCore]: Only .slang or .slangp shaders are supported. Falling back to stock.\n");
+      gl_core_context_bind_hw_render(gl, true);
       path = NULL;
    }
 
@@ -1069,6 +1194,7 @@ static bool gl_core_set_shader(void *data,
    if (!path)
    {
       gl_core_init_default_filter_chain(gl);
+      gl_core_context_bind_hw_render(gl, true);
       return true;
    }
 
@@ -1076,9 +1202,11 @@ static bool gl_core_set_shader(void *data,
    {
       RARCH_ERR("[Vulkan]: Failed to create filter chain: \"%s\". Falling back to stock.\n", path);
       gl_core_init_default_filter_chain(gl);
+      gl_core_context_bind_hw_render(gl, true);
       return false;
    }
 
+   gl_core_context_bind_hw_render(gl, true);
    return true;
 }
 
@@ -1229,23 +1357,52 @@ static bool gl_core_frame(void *data, const void *frame,
    if (!gl)
       return false;
 
+   gl_core_context_bind_hw_render(gl, false);
+   glBindVertexArray(gl->vao);
+
    streamed = &gl->textures[gl->textures_index];
-   gl_core_update_cpu_texture(gl, streamed, frame, frame_width, frame_height, pitch);
+   if (frame)
+   {
+      if (!gl->hw_render_enable)
+      {
+         gl_core_update_cpu_texture(gl, streamed, frame, frame_width, frame_height, pitch);
+         gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
+      }
+      else
+      {
+         streamed->width = frame_width;
+         streamed->height = frame_height;
+      }
+   }
 
    gl_core_set_viewport(gl, video_info, video_info->width, video_info->height, false, true);
 
    memset(&texture, 0, sizeof(texture));
-   texture.image  = streamed->tex;
-   texture.width  = streamed->width;
+
+   texture.width = streamed->width;
    texture.height = streamed->height;
-   texture.format = gl->video_info.rgb32 ? GL_RGBA8 : GL_RGB565;
+   if (gl->hw_render_enable)
+   {
+      texture.image = gl->hw_render_texture;
+      texture.format = GL_RGBA8;
+      texture.padded_width = gl->hw_render_max_width;
+      texture.padded_height = gl->hw_render_max_height;
+   }
+   else
+   {
+      texture.image = streamed->tex;
+      texture.format = gl->video_info.rgb32 ? GL_RGBA8 : GL_RGB565;
+      texture.padded_width = streamed->width;
+      texture.padded_height = streamed->height;
+   }
    gl_core_filter_chain_set_input_texture(gl->filter_chain, &texture);
    gl_core_filter_chain_build_offscreen_passes(gl->filter_chain, &gl->filter_chain_vp);
 
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
    glClearColor(0.0f, 0.0f, 0.0f, 0.0f);
    glClear(GL_COLOR_BUFFER_BIT);
-   gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp, gl->mvp_yflip.data);
+   gl_core_filter_chain_build_viewport_pass(gl->filter_chain, &gl->filter_chain_vp,
+                                            gl->hw_render_bottom_left ? gl->mvp.data : gl->mvp_yflip.data);
    gl_core_filter_chain_end_frame(gl->filter_chain);
 
 #if defined(HAVE_MENU)
@@ -1301,7 +1458,8 @@ static bool gl_core_frame(void *data, const void *frame,
 
    video_info->cb_swap_buffers(video_info->context_data, video_info);
 
-   gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
+   glBindVertexArray(0);
+   gl_core_context_bind_hw_render(gl, true);
    return true;
 }
 
@@ -1469,6 +1627,7 @@ static void gl_core_set_texture_frame(void *data,
    if (!gl)
       return;
 
+   gl_core_context_bind_hw_render(gl, false);
    menu_filter = settings->bools.menu_linear_filter ? GL_LINEAR : GL_NEAREST;
 
    if (gl->menu_texture)
@@ -1495,6 +1654,7 @@ static void gl_core_set_texture_frame(void *data,
 
    glBindTexture(GL_TEXTURE_2D, 0);
    gl->menu_texture_alpha = alpha;
+   gl_core_context_bind_hw_render(gl, true);
 }
 
 static void gl_core_set_texture_enable(void *data, bool state, bool full_screen)
@@ -1508,6 +1668,42 @@ static void gl_core_set_texture_enable(void *data, bool state, bool full_screen)
    gl->menu_texture_full_screen = full_screen;
 }
 
+static void gl_core_get_video_output_size(void *data,
+      unsigned *width, unsigned *height)
+{
+   gfx_ctx_size_t size_data;
+   size_data.width  = width;
+   size_data.height = height;
+   video_context_driver_get_video_output_size(&size_data);
+}
+
+static void gl_core_get_video_output_prev(void *data)
+{
+   video_context_driver_get_video_output_prev();
+}
+
+static void gl_core_get_video_output_next(void *data)
+{
+   video_context_driver_get_video_output_next();
+}
+
+static uintptr_t gl_core_get_current_framebuffer(void *data)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+   if (!gl || !gl->hw_render_enable)
+      return 0;
+   return gl->hw_render_fbo;
+}
+
+static retro_proc_address_t gl_core_get_proc_address(void *data, const char *sym)
+{
+   gfx_ctx_proc_address_t proc_address;
+   proc_address.addr = NULL;
+   proc_address.sym  = sym;
+   video_context_driver_get_proc_address(&proc_address);
+   return proc_address.addr;
+}
+
 static const video_poke_interface_t gl_core_poke_interface = {
    gl_core_get_flags,
    NULL,                   /* set_coords */
@@ -1517,11 +1713,11 @@ static const video_poke_interface_t gl_core_poke_interface = {
    gl_core_set_video_mode,
    gl_core_get_refresh_rate, /* get_refresh_rate */
    NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
-   NULL,
+   gl_core_get_video_output_size,
+   gl_core_get_video_output_prev,
+   gl_core_get_video_output_next,
+   gl_core_get_current_framebuffer,
+   gl_core_get_proc_address,
    gl_core_set_aspect_ratio,
    gl_core_apply_state_changes,
    gl_core_set_texture_frame,
