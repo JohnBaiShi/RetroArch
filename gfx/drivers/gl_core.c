@@ -860,6 +860,7 @@ static void video_texture_load_gl_core(
          break;
 
       case TEXTURE_FILTER_MIPMAP_LINEAR:
+	  default:
          mag_filter = GL_LINEAR;
          min_filter = GL_LINEAR_MIPMAP_LINEAR;
          break;

@@ -258,7 +258,7 @@ struct aspect_ratio_elem aspectratio_lut[ASPECT_RATIO_END] = {
 };
 
 static const video_driver_t *video_drivers[] = {
-#ifdef HAVE_OPENGL_CORE
+#if defined(HAVE_OPENGL_CORE)
    &video_gl_core,
 #endif
 #ifdef HAVE_OPENGL
