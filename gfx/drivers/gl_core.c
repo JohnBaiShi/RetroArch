@@ -918,6 +918,7 @@ static void *gl_core_init(const video_info_t *video,
 
    glGenVertexArrays(1, &gl->vao);
    glBindVertexArray(gl->vao);
+   gl_core_context_bind_hw_render(gl, true);
 
    return gl;
 
