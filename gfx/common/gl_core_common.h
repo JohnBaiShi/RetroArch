@@ -39,6 +39,7 @@
 RETRO_BEGIN_DECLS
 
 #define GL_CORE_NUM_TEXTURES 4
+#define GL_CORE_NUM_VBOS 256
 struct gl_core_streamed_texture
 {
    GLuint tex;
@@ -108,7 +109,11 @@ typedef struct gl_core
    bool overlay_enable;
    bool overlay_full_screen;
 
+   GLuint scratch_vbos[GL_CORE_NUM_VBOS];
+   unsigned scratch_vbo_index;
 } gl_core_t;
+
+void gl_core_bind_scratch_vbo(gl_core_t *gl, const void *data, size_t size);
 
 RETRO_END_DECLS
 

@@ -63,6 +63,25 @@ static void gl_core_free_overlay(gl_core_t *gl)
    gl->overlays             = 0;
 }
 
+static void gl_core_free_scratch_vbos(gl_core_t *gl)
+{
+   int i;
+   for (i = 0; i < GL_CORE_NUM_VBOS; i++)
+      if (gl->scratch_vbos[i])
+         glDeleteBuffers(1, &gl->scratch_vbos[i]);
+}
+
+void gl_core_bind_scratch_vbo(gl_core_t *gl, const void *data, size_t size)
+{
+   if (!gl->scratch_vbos[gl->scratch_vbo_index])
+      glGenBuffers(1, &gl->scratch_vbos[gl->scratch_vbo_index]);
+   glBindBuffer(GL_ARRAY_BUFFER, gl->scratch_vbos[gl->scratch_vbo_index]);
+   glBufferData(GL_ARRAY_BUFFER, size, data, GL_STREAM_DRAW);
+   gl->scratch_vbo_index++;
+   if (gl->scratch_vbo_index >= GL_CORE_NUM_VBOS)
+      gl->scratch_vbo_index = 0;
+}
+
 static void gl_core_overlay_vertex_geom(void *data,
       unsigned image,
       float x, float y,
@@ -139,23 +158,15 @@ static void gl_core_render_overlay(gl_core_t *gl, video_frame_info_t *video_info
    if (gl->pipelines.alpha_blend_loc.flat_ubo_vertex >= 0)
       glUniform4fv(gl->pipelines.alpha_blend_loc.flat_ubo_vertex, 4, gl->mvp_no_rot.data);
 
-   // Crude, some round-robin system might be good.
-   GLuint vbo[3];
-   glGenBuffers(3, vbo);
    glEnableVertexAttribArray(0);
    glEnableVertexAttribArray(1);
    glEnableVertexAttribArray(2);
 
-   glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
-   glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(float) * gl->overlays, gl->overlay_vertex_coord, GL_STREAM_DRAW);
+   gl_core_bind_scratch_vbo(gl, gl->overlay_vertex_coord, 8 * sizeof(float) * gl->overlays);
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)(uintptr_t)0);
-
-   glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
-   glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(float) * gl->overlays, gl->overlay_tex_coord, GL_STREAM_DRAW);
+   gl_core_bind_scratch_vbo(gl, gl->overlay_tex_coord, 8 * sizeof(float) * gl->overlays);
    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)(uintptr_t)0);
-
-   glBindBuffer(GL_ARRAY_BUFFER, vbo[2]);
-   glBufferData(GL_ARRAY_BUFFER, 16 * sizeof(float) * gl->overlays, gl->overlay_color_coord, GL_STREAM_DRAW);
+   gl_core_bind_scratch_vbo(gl, gl->overlay_color_coord, 16 * sizeof(float) * gl->overlays);
    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(uintptr_t)0);
 
    for (i = 0; i < gl->overlays; i++)
@@ -164,6 +175,10 @@ static void gl_core_render_overlay(gl_core_t *gl, video_frame_info_t *video_info
       glBindTexture(GL_TEXTURE_2D, gl->overlay_tex[i]);
       glDrawArrays(GL_TRIANGLE_STRIP, 4 * i, 4);
    }
+
+   glDisableVertexAttribArray(0);
+   glDisableVertexAttribArray(1);
+   glDisableVertexAttribArray(2);
 
    glDisable(GL_BLEND);
    glBindTexture(GL_TEXTURE_2D, 0);
@@ -212,6 +227,7 @@ static void gl_core_destroy_resources(gl_core_t *gl)
       glDeleteProgram(gl->pipelines.bokeh);
 
    gl_core_free_overlay(gl);
+   gl_core_free_scratch_vbos(gl);
    free(gl);
 }
 
@@ -1184,14 +1200,10 @@ static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_i
       1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
    };
 
-   // Crude, some round-robin system might be good.
-   GLuint vbo;
-   glGenBuffers(1, &vbo);
-   glBindBuffer(GL_ARRAY_BUFFER, vbo);
-   glBufferData(GL_ARRAY_BUFFER, sizeof(vbo_data), vbo_data, GL_STREAM_DRAW);
    glEnableVertexAttribArray(0);
    glEnableVertexAttribArray(1);
    glEnableVertexAttribArray(2);
+   gl_core_bind_scratch_vbo(gl, vbo_data, sizeof(vbo_data));
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(uintptr_t)0);
    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(uintptr_t)(2 * sizeof(float)));
    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 8 * sizeof(float), (void *)(uintptr_t)(4 * sizeof(float)));
@@ -1200,7 +1212,6 @@ static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_i
    glDisableVertexAttribArray(1);
    glDisableVertexAttribArray(2);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glDeleteBuffers(1, &vbo);
 
    glDisable(GL_BLEND);
 }

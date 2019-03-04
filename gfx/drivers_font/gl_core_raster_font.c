@@ -179,23 +179,17 @@ static void gl_core_raster_font_draw_vertices(gl_core_raster_t *font,
                    4, font->gl->mvp_no_rot.data);
    }
 
-   // Crude, some round-robin system might be good.
-   GLuint vbo[3];
-   glGenBuffers(3, vbo);
    glEnableVertexAttribArray(0);
    glEnableVertexAttribArray(1);
    glEnableVertexAttribArray(2);
 
-   glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
-   glBufferData(GL_ARRAY_BUFFER, 2 * sizeof(float) * coords->vertices, coords->vertex, GL_STREAM_DRAW);
+   gl_core_bind_scratch_vbo(font->gl, coords->vertex, 2 * sizeof(float) * coords->vertices);
    glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)(uintptr_t)0);
 
-   glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
-   glBufferData(GL_ARRAY_BUFFER, 2 * sizeof(float) * coords->vertices, coords->tex_coord, GL_STREAM_DRAW);
+   gl_core_bind_scratch_vbo(font->gl, coords->tex_coord, 2 * sizeof(float) * coords->vertices);
    glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)(uintptr_t)0);
 
-   glBindBuffer(GL_ARRAY_BUFFER, vbo[2]);
-   glBufferData(GL_ARRAY_BUFFER, 4 * sizeof(float) * coords->vertices, coords->color, GL_STREAM_DRAW);
+   gl_core_bind_scratch_vbo(font->gl, coords->color, 4 * sizeof(float) * coords->vertices);
    glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(uintptr_t)0);
 
    glDrawArrays(GL_TRIANGLES, 0, coords->vertices);
@@ -204,7 +198,6 @@ static void gl_core_raster_font_draw_vertices(gl_core_raster_t *font,
    glDisableVertexAttribArray(1);
    glDisableVertexAttribArray(2);
    glBindBuffer(GL_ARRAY_BUFFER, 0);
-   glDeleteBuffers(3, vbo);
 }
 
 static void gl_core_raster_font_render_line(
