@@ -619,7 +619,7 @@ static bool gl_core_init_filter_chain_preset(gl_core_t *gl, const char *shader_p
 
    if (!gl->filter_chain)
    {
-      RARCH_ERR("[Vulkan]: Failed to create preset: \"%s\".\n", shader_path);
+      RARCH_ERR("[GLCore]: Failed to create preset: \"%s\".\n", shader_path);
       return false;
    }
 
@@ -1201,7 +1201,7 @@ static bool gl_core_set_shader(void *data,
 
    if (!gl_core_init_filter_chain_preset(gl, path))
    {
-      RARCH_ERR("[Vulkan]: Failed to create filter chain: \"%s\". Falling back to stock.\n", path);
+      RARCH_ERR("[GLCore]: Failed to create filter chain: \"%s\". Falling back to stock.\n", path);
       gl_core_init_default_filter_chain(gl);
       gl_core_context_bind_hw_render(gl, true);
       return false;

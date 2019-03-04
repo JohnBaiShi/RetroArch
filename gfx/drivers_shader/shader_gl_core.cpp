@@ -2179,7 +2179,7 @@ static bool gl_core_filter_chain_load_luts(
       auto image = gl_core_filter_chain_load_lut(chain, &shader->lut[i]);
       if (!image)
       {
-         RARCH_ERR("[Vulkan]: Failed to load LUT \"%s\".\n", shader->lut[i].path);
+         RARCH_ERR("[GLCore]: Failed to load LUT \"%s\".\n", shader->lut[i].path);
          return false;
       }
 
@@ -2280,7 +2280,7 @@ gl_core_filter_chain_t *gl_core_filter_chain_create_from_preset(
       {
          if (shader->num_parameters >= GFX_MAX_PARAMETERS)
          {
-            RARCH_ERR("[Vulkan]: Exceeded maximum number of parameters.\n");
+            RARCH_ERR("[GLCore]: Exceeded maximum number of parameters.\n");
             return nullptr;
          }
 
@@ -2300,7 +2300,7 @@ gl_core_filter_chain_t *gl_core_filter_chain_create_from_preset(
                 meta_param.maximum != itr->maximum ||
                 meta_param.step != itr->step)
             {
-               RARCH_ERR("[Vulkan]: Duplicate parameters found for \"%s\", but arguments do not match.\n",
+               RARCH_ERR("[GLCore]: Duplicate parameters found for \"%s\", but arguments do not match.\n",
                      itr->id);
                return nullptr;
             }
