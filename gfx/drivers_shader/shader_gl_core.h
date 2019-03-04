@@ -138,15 +138,17 @@ void gl_core_filter_chain_end_frame(gl_core_filter_chain_t *chain);
 
 struct gl_core_buffer_locations
 {
-   GLint ubo_vertex;
-   GLint push_constant_vertex;
-   GLint ubo_fragment;
-   GLint push_constant_fragment;
+   GLint flat_ubo_vertex;
+   GLint flat_ubo_fragment;
+   GLint flat_push_vertex;
+   GLint flat_push_fragment;
+   GLuint buffer_index_ubo_vertex;
+   GLuint buffer_index_ubo_fragment;
 };
 
 GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
                                      const uint32_t *fragment, size_t fragment_size,
-                                     struct gl_core_buffer_locations *loc);
+                                     struct gl_core_buffer_locations *loc, bool flatten);
 
 RETRO_END_DECLS
 

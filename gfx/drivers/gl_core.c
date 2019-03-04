@@ -296,43 +296,43 @@ static bool gl_core_init_pipelines(gl_core_t *gl)
 
    gl->pipelines.alpha_blend = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
                                                              alpha_blend_frag, sizeof(alpha_blend_frag),
-                                                             &gl->pipelines.alpha_blend_loc);
+                                                             &gl->pipelines.alpha_blend_loc, true);
    if (!gl->pipelines.alpha_blend)
       return false;
 
    gl->pipelines.font = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
                                                       font_frag, sizeof(font_frag),
-                                                      &gl->pipelines.font_loc);
+                                                      &gl->pipelines.font_loc, true);
    if (!gl->pipelines.font)
       return false;
 
    gl->pipelines.ribbon_simple = gl_core_cross_compile_program(pipeline_ribbon_simple_vert, sizeof(pipeline_ribbon_simple_vert),
                                                                pipeline_ribbon_simple_frag, sizeof(pipeline_ribbon_simple_frag),
-                                                               &gl->pipelines.ribbon_simple_loc);
+                                                               &gl->pipelines.ribbon_simple_loc, true);
    if (!gl->pipelines.ribbon_simple)
       return false;
 
    gl->pipelines.ribbon = gl_core_cross_compile_program(pipeline_ribbon_vert, sizeof(pipeline_ribbon_vert),
                                                         pipeline_ribbon_frag, sizeof(pipeline_ribbon_frag),
-                                                        &gl->pipelines.ribbon_loc);
+                                                        &gl->pipelines.ribbon_loc, true);
    if (!gl->pipelines.ribbon)
       return false;
 
    gl->pipelines.bokeh = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
                                                        pipeline_bokeh_frag, sizeof(pipeline_bokeh_frag),
-                                                       &gl->pipelines.bokeh_loc);
+                                                       &gl->pipelines.bokeh_loc, true);
    if (!gl->pipelines.bokeh)
       return false;
 
    gl->pipelines.snow_simple = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
                                                              pipeline_snow_simple_frag, sizeof(pipeline_snow_simple_frag),
-                                                             &gl->pipelines.snow_simple_loc);
+                                                             &gl->pipelines.snow_simple_loc, true);
    if (!gl->pipelines.snow_simple)
       return false;
 
    gl->pipelines.snow = gl_core_cross_compile_program(alpha_blend_vert, sizeof(alpha_blend_vert),
                                                       pipeline_snow_frag, sizeof(pipeline_snow_frag),
-                                                      &gl->pipelines.snow_loc);
+                                                      &gl->pipelines.snow_loc, true);
    if (!gl->pipelines.snow)
       return false;
 
@@ -840,8 +840,8 @@ static void gl_core_draw_menu_texture(gl_core_t *gl, video_frame_info_t *video_i
    glBindTexture(GL_TEXTURE_2D, gl->menu_texture);
 
    glUseProgram(gl->pipelines.alpha_blend);
-   if (gl->pipelines.alpha_blend_loc.ubo_vertex >= 0)
-      glUniform4fv(gl->pipelines.alpha_blend_loc.ubo_vertex, 4, gl->mvp_no_rot_yflip.data);
+   if (gl->pipelines.alpha_blend_loc.flat_ubo_vertex >= 0)
+      glUniform4fv(gl->pipelines.alpha_blend_loc.flat_ubo_vertex, 4, gl->mvp_no_rot_yflip.data);
 
    const float vbo_data[] = {
       0.0f, 0.0f, 0.0f, 0.0f, 1.0f, 1.0f, 1.0f, gl->menu_texture_alpha,
