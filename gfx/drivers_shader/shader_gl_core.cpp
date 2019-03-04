@@ -655,7 +655,12 @@ void Framebuffer::init()
 
    glGenTextures(1, &image);
    glBindTexture(GL_TEXTURE_2D, image);
-   glTexStorage2D(GL_TEXTURE_2D, std::min(max_levels, num_miplevels(size.width, size.height)),
+
+   levels = std::min(max_levels, num_miplevels(size.width, size.height));
+   if (levels == 0)
+      levels = 1;
+
+   glTexStorage2D(GL_TEXTURE_2D, levels,
                   format,
                   size.width, size.height);
 
@@ -718,6 +723,7 @@ void Framebuffer::clear()
 
 void Framebuffer::generate_mips()
 {
+   glBindFramebuffer(GL_FRAMEBUFFER, 0);
    glBindTexture(GL_TEXTURE_2D, image);
    glGenerateMipmap(GL_TEXTURE_2D);
    glBindTexture(GL_TEXTURE_2D, 0);
@@ -728,7 +734,7 @@ void Framebuffer::copy(const CommonResources &common, GLuint image)
    if (!complete)
       return;
 
-   glBindFramebuffer(GL_FRAMEBUFFER, image);
+   glBindFramebuffer(GL_FRAMEBUFFER, framebuffer);
    glActiveTexture(GL_TEXTURE0);
    glBindTexture(GL_TEXTURE_2D, image);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
