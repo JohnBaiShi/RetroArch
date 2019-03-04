@@ -89,7 +89,7 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       spirv_cross::CompilerGLSL vertex_compiler(vertex, vertex_size / 4);
       spirv_cross::CompilerGLSL fragment_compiler(fragment, fragment_size / 4);
       spirv_cross::CompilerGLSL::Options opts;
-#ifdef HAVE_OPENGLES
+#ifdef HAVE_OPENGLES3
       opts.es = true;
       opts.version = 300;
 #else
@@ -382,7 +382,7 @@ static GLenum address_to_gl(gl_core_filter_chain_address type)
       case GL_CORE_FILTER_CHAIN_ADDRESS_CLAMP_TO_EDGE:
          return GL_CLAMP_TO_EDGE;
 
-#ifdef HAVE_OPENGLES
+#ifdef HAVE_OPENGLES3
       case GL_CORE_FILTER_CHAIN_ADDRESS_CLAMP_TO_BORDER:
          //RARCH_WARN("[GLCore]: No CLAMP_TO_BORDER in GLES3. Falling back to edge clamp.\n");
          return GL_CLAMP_TO_EDGE;
@@ -1604,7 +1604,7 @@ void Pass::build_commands(
       glViewport(0, 0, size.width, size.height);
    }
 
-#ifndef HAVE_OPENGLES
+#ifndef HAVE_OPENGLES3
    if (framebuffer && framebuffer->get_format() == GL_SRGB8_ALPHA8)
       glEnable(GL_FRAMEBUFFER_SRGB);
    else
@@ -1612,7 +1612,7 @@ void Pass::build_commands(
 #endif
 
    common->draw_quad();
-#ifndef HAVE_OPENGLES
+#ifndef HAVE_OPENGLES3
    glDisable(GL_FRAMEBUFFER_SRGB);
 #endif
 

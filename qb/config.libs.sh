@@ -348,8 +348,8 @@ if [ "$HAVE_OPENGL" != 'no' ] && [ "$HAVE_OPENGLES" != 'yes' ]; then
    fi
 fi
 
-if [ "$HAVE_OPENGL" == 'no' ] && [ "$HAVE_OPENGLES" == 'no' ]; then
-   die : 'Notice: OpenGL and OpenGLES are disabled. Disabling HAVE_OPENGL_CORE.'
+if [ "$HAVE_OPENGL" == 'no' ] && [ "$HAVE_OPENGLES3" == 'no' ]; then
+   die : 'Notice: OpenGL and OpenGLES3 are disabled. Disabling HAVE_OPENGL_CORE.'
    HAVE_OPENGL_CORE='no'
 fi
 

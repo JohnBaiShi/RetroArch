@@ -240,9 +240,9 @@ static const gfx_ctx_driver_t *gl_core_get_context(gl_core_t *gl)
    unsigned major;
    unsigned minor;
 
-#ifdef HAVE_OPENGLES
+#ifdef HAVE_OPENGLES3
    api = GFX_CTX_OPENGL_ES_API;
-   major = 2;
+   major = 3;
    minor = 0;
 #else
    api   = GFX_CTX_OPENGL_API;
@@ -541,7 +541,7 @@ static bool gl_core_init_filter_chain(gl_core_t *gl)
 }
 
 #ifdef GL_DEBUG
-#ifdef HAVE_OPENGLES
+#ifdef HAVE_OPENGLES3
 #define DEBUG_CALLBACK_TYPE GL_APIENTRY
 #define GL_DEBUG_SOURCE_API GL_DEBUG_SOURCE_API_KHR
 #define GL_DEBUG_SOURCE_WINDOW_SYSTEM GL_DEBUG_SOURCE_WINDOW_SYSTEM_KHR
@@ -653,7 +653,7 @@ static void gl_core_begin_debug(gl_core_t *gl)
 {
    if (gl_check_capability(GL_CAPS_DEBUG))
    {
-#ifdef HAVE_OPENGLES
+#ifdef HAVE_OPENGLES3
       glDebugMessageCallbackKHR(gl_core_debug_cb, gl);
       glDebugMessageControlKHR(GL_DONT_CARE, GL_DONT_CARE, GL_DONT_CARE, 0, NULL, GL_TRUE);
       glEnable(GL_DEBUG_OUTPUT_SYNCHRONOUS_KHR);
