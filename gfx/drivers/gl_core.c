@@ -46,6 +46,132 @@
 
 static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
 
+#ifdef HAVE_OVERLAY
+static void gl_core_free_overlay(gl_core_t *gl)
+{
+   if (gl->overlay_tex)
+      glDeleteTextures(gl->overlays, gl->overlay_tex);
+
+   free(gl->overlay_tex);
+   free(gl->overlay_vertex_coord);
+   free(gl->overlay_tex_coord);
+   free(gl->overlay_color_coord);
+   gl->overlay_tex          = NULL;
+   gl->overlay_vertex_coord = NULL;
+   gl->overlay_tex_coord    = NULL;
+   gl->overlay_color_coord  = NULL;
+   gl->overlays             = 0;
+}
+
+static void gl_core_overlay_vertex_geom(void *data,
+      unsigned image,
+      float x, float y,
+      float w, float h)
+{
+   GLfloat *vertex = NULL;
+   gl_core_t *gl = (gl_core_t*)data;
+
+   if (!gl)
+      return;
+
+   if (image > gl->overlays)
+   {
+      RARCH_ERR("[GLCore]: Invalid overlay id: %u\n", image);
+      return;
+   }
+
+   vertex          = (GLfloat*)&gl->overlay_vertex_coord[image * 8];
+
+   /* Flipped, so we preserve top-down semantics. */
+   y               = 1.0f - y;
+   h               = -h;
+
+   vertex[0]       = x;
+   vertex[1]       = y;
+   vertex[2]       = x + w;
+   vertex[3]       = y;
+   vertex[4]       = x;
+   vertex[5]       = y + h;
+   vertex[6]       = x + w;
+   vertex[7]       = y + h;
+}
+
+static void gl_core_overlay_tex_geom(void *data,
+      unsigned image,
+      GLfloat x, GLfloat y,
+      GLfloat w, GLfloat h)
+{
+   GLfloat *tex = NULL;
+   gl_core_t *gl = (gl_core_t*)data;
+
+   if (!gl)
+      return;
+
+   tex          = (GLfloat*)&gl->overlay_tex_coord[image * 8];
+
+   tex[0]       = x;
+   tex[1]       = y;
+   tex[2]       = x + w;
+   tex[3]       = y;
+   tex[4]       = x;
+   tex[5]       = y + h;
+   tex[6]       = x + w;
+   tex[7]       = y + h;
+}
+
+static void gl_core_render_overlay(gl_core_t *gl, video_frame_info_t *video_info)
+{
+   unsigned i;
+   unsigned width                      = video_info->width;
+   unsigned height                     = video_info->height;
+
+   glEnable(GL_BLEND);
+   glDisable(GL_CULL_FACE);
+   glDisable(GL_DEPTH_TEST);
+   glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
+   glBlendEquation(GL_FUNC_ADD);
+
+   if (gl->overlay_full_screen)
+      glViewport(0, 0, width, height);
+
+   /* Ensure that we reset the attrib array. */
+   glUseProgram(gl->pipelines.alpha_blend);
+   if (gl->pipelines.alpha_blend_loc.flat_ubo_vertex >= 0)
+      glUniform4fv(gl->pipelines.alpha_blend_loc.flat_ubo_vertex, 4, gl->mvp_no_rot.data);
+
+   // Crude, some round-robin system might be good.
+   GLuint vbo[3];
+   glGenBuffers(3, vbo);
+   glEnableVertexAttribArray(0);
+   glEnableVertexAttribArray(1);
+   glEnableVertexAttribArray(2);
+
+   glBindBuffer(GL_ARRAY_BUFFER, vbo[0]);
+   glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(float) * gl->overlays, gl->overlay_vertex_coord, GL_STREAM_DRAW);
+   glVertexAttribPointer(0, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)(uintptr_t)0);
+
+   glBindBuffer(GL_ARRAY_BUFFER, vbo[1]);
+   glBufferData(GL_ARRAY_BUFFER, 8 * sizeof(float) * gl->overlays, gl->overlay_tex_coord, GL_STREAM_DRAW);
+   glVertexAttribPointer(1, 2, GL_FLOAT, GL_FALSE, 2 * sizeof(float), (void *)(uintptr_t)0);
+
+   glBindBuffer(GL_ARRAY_BUFFER, vbo[2]);
+   glBufferData(GL_ARRAY_BUFFER, 16 * sizeof(float) * gl->overlays, gl->overlay_color_coord, GL_STREAM_DRAW);
+   glVertexAttribPointer(2, 4, GL_FLOAT, GL_FALSE, 4 * sizeof(float), (void *)(uintptr_t)0);
+
+   for (i = 0; i < gl->overlays; i++)
+   {
+      glActiveTexture(GL_TEXTURE1);
+      glBindTexture(GL_TEXTURE_2D, gl->overlay_tex[i]);
+      glDrawArrays(GL_TRIANGLE_STRIP, 4 * i, 4);
+   }
+
+   glDisable(GL_BLEND);
+   glBindTexture(GL_TEXTURE_2D, 0);
+   if (gl->overlay_full_screen)
+      glViewport(gl->vp.x, gl->vp.y, gl->vp.width, gl->vp.height);
+}
+#endif
+
 static void gl_core_destroy_resources(gl_core_t *gl)
 {
    int i;
@@ -85,6 +211,7 @@ static void gl_core_destroy_resources(gl_core_t *gl)
    if (gl->pipelines.bokeh)
       glDeleteProgram(gl->pipelines.bokeh);
 
+   gl_core_free_overlay(gl);
    free(gl);
 }
 
@@ -523,7 +650,7 @@ static void gl_core_begin_debug(gl_core_t *gl)
 #endif
    }
    else
-      RARCH_ERR("[GL]: Neither GL_KHR_debug nor GL_ARB_debug_output are implemented. Cannot start GL debugging.\n");
+      RARCH_ERR("[GLCore]: Neither GL_KHR_debug nor GL_ARB_debug_output are implemented. Cannot start GL debugging.\n");
 }
 #endif
 
@@ -663,6 +790,184 @@ error:
    gl_core_destroy_resources(gl);
    return NULL;
 }
+
+static unsigned num_miplevels(unsigned width, unsigned height)
+{
+   unsigned levels = 1;
+   if (width < height)
+      width = height;
+   while (width > 1)
+   {
+      levels++;
+      width >>= 1;
+   }
+   return levels;
+}
+
+static void video_texture_load_gl_core(
+      const struct texture_image *ti,
+      enum texture_filter_type filter_type,
+      uintptr_t *idptr)
+{
+   /* Generate the OpenGL texture object */
+   GLuint id;
+   unsigned levels;
+   GLenum mag_filter, min_filter;
+
+   glGenTextures(1, &id);
+   *idptr = id;
+   glBindTexture(GL_TEXTURE_2D, id);
+
+   levels = 1;
+   if (filter_type == TEXTURE_FILTER_MIPMAP_LINEAR || filter_type == TEXTURE_FILTER_MIPMAP_NEAREST)
+      levels = num_miplevels(ti->width, ti->height);
+
+   glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, ti->width, ti->height);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+
+   switch (filter_type)
+   {
+      case TEXTURE_FILTER_LINEAR:
+         mag_filter = GL_LINEAR;
+         min_filter = GL_LINEAR;
+         break;
+
+      case TEXTURE_FILTER_NEAREST:
+         mag_filter = GL_NEAREST;
+         min_filter = GL_NEAREST;
+         break;
+
+      case TEXTURE_FILTER_MIPMAP_NEAREST:
+         mag_filter = GL_LINEAR;
+         min_filter = GL_LINEAR_MIPMAP_NEAREST;
+         break;
+
+      case TEXTURE_FILTER_MIPMAP_LINEAR:
+         mag_filter = GL_LINEAR;
+         min_filter = GL_LINEAR_MIPMAP_LINEAR;
+         break;
+   }
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
+
+   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
+   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
+   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
+                   ti->width, ti->height, GL_RGBA, GL_UNSIGNED_BYTE, ti->pixels);
+
+   if (levels > 1)
+      glGenerateMipmap(GL_TEXTURE_2D);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_R, GL_BLUE);
+   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_SWIZZLE_B, GL_RED);
+   glBindTexture(GL_TEXTURE_2D, 0);
+}
+
+#ifdef HAVE_OVERLAY
+static bool gl_core_overlay_load(void *data,
+      const void *image_data, unsigned num_images)
+{
+   unsigned i, j;
+   uintptr_t id;
+   gl_core_t *gl = (gl_core_t*)data;
+   const struct texture_image *images =
+      (const struct texture_image*)image_data;
+
+   if (!gl)
+      return false;
+
+   gl_core_free_overlay(gl);
+   gl->overlay_tex = (GLuint*)
+      calloc(num_images, sizeof(*gl->overlay_tex));
+
+   if (!gl->overlay_tex)
+      return false;
+
+   gl->overlay_vertex_coord = (GLfloat*)
+      calloc(2 * 4 * num_images, sizeof(GLfloat));
+   gl->overlay_tex_coord    = (GLfloat*)
+      calloc(2 * 4 * num_images, sizeof(GLfloat));
+   gl->overlay_color_coord  = (GLfloat*)
+      calloc(4 * 4 * num_images, sizeof(GLfloat));
+
+   if (     !gl->overlay_vertex_coord
+         || !gl->overlay_tex_coord
+         || !gl->overlay_color_coord)
+      return false;
+
+   gl->overlays = num_images;
+   glGenTextures(num_images, gl->overlay_tex);
+
+   for (i = 0; i < num_images; i++)
+   {
+      unsigned alignment = video_pixel_get_alignment(images[i].width
+            * sizeof(uint32_t));
+
+      video_texture_load_gl_core(&images[i], TEXTURE_FILTER_LINEAR, &id);
+      gl->overlay_tex[i] = id;
+
+      /* Default. Stretch to whole screen. */
+      gl_core_overlay_tex_geom(gl, i, 0, 0, 1, 1);
+      gl_core_overlay_vertex_geom(gl, i, 0, 0, 1, 1);
+
+      for (j = 0; j < 16; j++)
+         gl->overlay_color_coord[16 * i + j] = 1.0f;
+   }
+
+   return true;
+}
+
+static void gl_core_overlay_enable(void *data, bool state)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+
+   if (!gl)
+      return;
+
+   gl->overlay_enable = state;
+
+   if (gl->fullscreen)
+      video_context_driver_show_mouse(&state);
+}
+
+static void gl_core_overlay_full_screen(void *data, bool enable)
+{
+   gl_core_t *gl = (gl_core_t*)data;
+   if (gl)
+      gl->overlay_full_screen = enable;
+}
+
+static void gl_core_overlay_set_alpha(void *data, unsigned image, float mod)
+{
+   GLfloat *color = NULL;
+   gl_core_t *gl = (gl_core_t*)data;
+   if (!gl)
+      return;
+
+   color          = (GLfloat*)&gl->overlay_color_coord[image * 16];
+
+   color[ 0 + 3]  = mod;
+   color[ 4 + 3]  = mod;
+   color[ 8 + 3]  = mod;
+   color[12 + 3]  = mod;
+}
+
+static const video_overlay_interface_t gl_core_overlay_interface = {
+   gl_core_overlay_enable,
+   gl_core_overlay_load,
+   gl_core_overlay_tex_geom,
+   gl_core_overlay_vertex_geom,
+   gl_core_overlay_full_screen,
+   gl_core_overlay_set_alpha,
+};
+
+static void gl_core_get_overlay_interface(void *data,
+      const video_overlay_interface_t **iface)
+{
+   (void)data;
+   *iface = &gl_core_overlay_interface;
+}
+#endif
 
 static void gl_core_free(void *data)
 {
@@ -955,6 +1260,11 @@ static bool gl_core_frame(void *data, const void *frame,
 #endif
 #endif
 
+#ifdef HAVE_OVERLAY
+   if (gl->overlay_enable)
+      gl_core_render_overlay(gl, video_info);
+#endif
+
    if (!string_is_empty(msg))
    {
       //if (video_info->msg_bgcolor_enable)
@@ -1035,76 +1345,6 @@ static struct video_shader *gl_core_get_current_shader(void *data)
       return NULL;
 
    return gl_core_filter_chain_get_preset(gl->filter_chain);
-}
-
-static unsigned num_miplevels(unsigned width, unsigned height)
-{
-   unsigned levels = 1;
-   if (width < height)
-      width = height;
-   while (width > 1)
-   {
-      levels++;
-      width >>= 1;
-   }
-   return levels;
-}
-
-static void video_texture_load_gl_core(
-      struct texture_image *ti,
-      enum texture_filter_type filter_type,
-      uintptr_t *idptr)
-{
-   /* Generate the OpenGL texture object */
-   GLuint id;
-   unsigned levels;
-   GLenum mag_filter, min_filter;
-
-   glGenTextures(1, &id);
-   *idptr = id;
-   glBindTexture(GL_TEXTURE_2D, id);
-
-   levels = 1;
-   if (filter_type == TEXTURE_FILTER_MIPMAP_LINEAR || filter_type == TEXTURE_FILTER_MIPMAP_NEAREST)
-      levels = num_miplevels(ti->width, ti->height);
-
-   glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, ti->width, ti->height);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-
-   switch (filter_type)
-   {
-      case TEXTURE_FILTER_LINEAR:
-         mag_filter = GL_LINEAR;
-         min_filter = GL_LINEAR;
-         break;
-
-      case TEXTURE_FILTER_NEAREST:
-         mag_filter = GL_NEAREST;
-         min_filter = GL_NEAREST;
-         break;
-
-      case TEXTURE_FILTER_MIPMAP_NEAREST:
-         mag_filter = GL_LINEAR;
-         min_filter = GL_LINEAR_MIPMAP_NEAREST;
-         break;
-
-      case TEXTURE_FILTER_MIPMAP_LINEAR:
-         mag_filter = GL_LINEAR;
-         min_filter = GL_LINEAR_MIPMAP_LINEAR;
-         break;
-   }
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, mag_filter);
-   glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, min_filter);
-
-   glPixelStorei(GL_UNPACK_ALIGNMENT, 4);
-   glPixelStorei(GL_UNPACK_ROW_LENGTH, 0);
-   glTexSubImage2D(GL_TEXTURE_2D, 0, 0, 0,
-                   ti->width, ti->height, GL_RGBA, GL_UNSIGNED_BYTE, ti->pixels);
-
-   if (levels > 1)
-      glGenerateMipmap(GL_TEXTURE_2D);
-   glBindTexture(GL_TEXTURE_2D, 0);
 }
 
 #ifdef HAVE_THREADS
@@ -1303,7 +1543,7 @@ video_driver_t video_gl_core = {
 #endif
 
 #ifdef HAVE_OVERLAY
-   /*gl_core_get_overlay_interface,*/NULL,
+   gl_core_get_overlay_interface,
 #endif
    gl_core_get_poke_interface,
    /*gl_core_wrap_type_to_enum,*/NULL,

@@ -99,6 +99,15 @@ typedef struct gl_core
       struct gl_core_buffer_locations snow_loc;
       struct gl_core_buffer_locations bokeh_loc;
    } pipelines;
+
+   GLuint *overlay_tex;
+   float *overlay_vertex_coord;
+   float *overlay_tex_coord;
+   float *overlay_color_coord;
+   unsigned overlays;
+   bool overlay_enable;
+   bool overlay_full_screen;
+
 } gl_core_t;
 
 RETRO_END_DECLS
