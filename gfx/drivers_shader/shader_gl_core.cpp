@@ -89,8 +89,13 @@ GLuint gl_core_cross_compile_program(const uint32_t *vertex, size_t vertex_size,
       spirv_cross::CompilerGLSL vertex_compiler(vertex, vertex_size / 4);
       spirv_cross::CompilerGLSL fragment_compiler(fragment, fragment_size / 4);
       spirv_cross::CompilerGLSL::Options opts;
+#ifdef HAVE_OPENGLES
+      opts.es = true;
+      opts.version = 300;
+#else
       opts.es = false;
       opts.version = 150;
+#endif
       opts.fragment.default_float_precision = spirv_cross::CompilerGLSL::Options::Precision::Highp;
       opts.fragment.default_int_precision = spirv_cross::CompilerGLSL::Options::Precision::Highp;
       opts.enable_420pack_extension = false;
@@ -377,8 +382,14 @@ static GLenum address_to_gl(gl_core_filter_chain_address type)
       case GL_CORE_FILTER_CHAIN_ADDRESS_CLAMP_TO_EDGE:
          return GL_CLAMP_TO_EDGE;
 
+#ifdef HAVE_OPENGLES
+      case GL_CORE_FILTER_CHAIN_ADDRESS_CLAMP_TO_BORDER:
+         //RARCH_WARN("[GLCore]: No CLAMP_TO_BORDER in GLES3. Falling back to edge clamp.\n");
+         return GL_CLAMP_TO_EDGE;
+#else
       case GL_CORE_FILTER_CHAIN_ADDRESS_CLAMP_TO_BORDER:
          return GL_CLAMP_TO_BORDER;
+#endif
 
       case GL_CORE_FILTER_CHAIN_ADDRESS_REPEAT:
          return GL_REPEAT;
@@ -1593,13 +1604,17 @@ void Pass::build_commands(
       glViewport(0, 0, size.width, size.height);
    }
 
+#ifndef HAVE_OPENGLES
    if (framebuffer && framebuffer->get_format() == GL_SRGB8_ALPHA8)
       glEnable(GL_FRAMEBUFFER_SRGB);
    else
       glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
 
    common->draw_quad();
+#ifndef HAVE_OPENGLES
    glDisable(GL_FRAMEBUFFER_SRGB);
+#endif
 
    glBindFramebuffer(GL_FRAMEBUFFER, 0);
 
