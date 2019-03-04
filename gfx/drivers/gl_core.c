@@ -1285,6 +1285,19 @@ static bool gl_core_frame(void *data, const void *frame,
 
    video_info->cb_update_window_title(
          video_info->context_data, video_info);
+
+   /* Disable BFI during fast forward, slow-motion,
+    * and pause to prevent flicker. */
+   if (
+         video_info->black_frame_insertion
+         && !video_info->input_driver_nonblock_state
+         && !video_info->runloop_is_slowmotion
+         && !video_info->runloop_is_paused)
+   {
+      video_info->cb_swap_buffers(video_info->context_data, video_info);
+      glClear(GL_COLOR_BUFFER_BIT);
+   }
+
    video_info->cb_swap_buffers(video_info->context_data, video_info);
 
    gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
