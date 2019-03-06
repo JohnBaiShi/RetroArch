@@ -44,7 +44,7 @@
 #endif
 #endif
 
-static const struct video_ortho default_ortho = {0, 1, 0, 1, -1, 1};
+static const struct video_ortho gl_core_default_ortho = {0, 1, 0, 1, -1, 1};
 
 #ifdef HAVE_OVERLAY
 static void gl_core_free_overlay(gl_core_t *gl)
@@ -486,7 +486,7 @@ static void gl_core_set_viewport(gl_core_t *gl,
 #endif
 
    glViewport(gl->vp.x, gl->vp.y, gl->vp.width, gl->vp.height);
-   gl_core_set_projection(gl, &default_ortho, allow_rotate);
+   gl_core_set_projection(gl, &gl_core_default_ortho, allow_rotate);
 
    /* Set last backbuffer viewport. */
    if (!force_full)
@@ -928,7 +928,7 @@ error:
    return NULL;
 }
 
-static unsigned num_miplevels(unsigned width, unsigned height)
+static unsigned gl_core_num_miplevels(unsigned width, unsigned height)
 {
    unsigned levels = 1;
    if (width < height)
@@ -957,7 +957,7 @@ static void video_texture_load_gl_core(
 
    levels = 1;
    if (filter_type == TEXTURE_FILTER_MIPMAP_LINEAR || filter_type == TEXTURE_FILTER_MIPMAP_NEAREST)
-      levels = num_miplevels(ti->width, ti->height);
+      levels = gl_core_num_miplevels(ti->width, ti->height);
 
    glTexStorage2D(GL_TEXTURE_2D, levels, GL_RGBA8, ti->width, ti->height);
    glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
@@ -1231,7 +1231,7 @@ static void gl_core_set_rotation(void *data, unsigned rotation)
       return;
 
    gl->rotation = 90 * rotation;
-   gl_core_set_projection(gl, &default_ortho, true);
+   gl_core_set_projection(gl, &gl_core_default_ortho, true);
 }
 
 static void gl_core_viewport_info(void *data, struct video_viewport *vp)

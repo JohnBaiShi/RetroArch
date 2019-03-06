@@ -20,7 +20,6 @@
 #include <memory>
 #include <functional>
 #include <utility>
-#include <algorithm>
 #include <string.h>
 
 #include <compat/strl.h>
@@ -668,7 +667,9 @@ void Framebuffer::init()
    glGenTextures(1, &image);
    glBindTexture(GL_TEXTURE_2D, image);
 
-   levels = std::min(max_levels, num_miplevels(size.width, size.height));
+   levels = num_miplevels(size.width, size.height);
+   if (max_levels < levels)
+	   levels = max_levels;
    if (levels == 0)
       levels = 1;
 
@@ -709,7 +710,11 @@ void Framebuffer::init()
       glDeleteTextures(1, &image);
       glGenTextures(1, &image);
       glBindTexture(GL_TEXTURE_2D, image);
-      glTexStorage2D(GL_TEXTURE_2D, std::min(max_levels, num_miplevels(size.width, size.height)),
+
+      unsigned levels = num_miplevels(size.width, size.height);
+      if (max_levels < levels)
+         levels = max_levels;
+      glTexStorage2D(GL_TEXTURE_2D, levels,
                      GL_RGBA8,
                      size.width, size.height);
       glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, image, 0);

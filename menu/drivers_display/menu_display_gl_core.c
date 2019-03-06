@@ -143,7 +143,6 @@ static void menu_display_gl_core_draw_pipeline(menu_display_ctx_draw_t *draw,
 static void menu_display_gl_core_draw(menu_display_ctx_draw_t *draw,
       video_frame_info_t *video_info)
 {
-   unsigned i;
    const float *vertex       = NULL;
    const float *tex_coord    = NULL;
    const float *color        = NULL;
