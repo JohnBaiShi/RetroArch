@@ -1924,11 +1924,24 @@ bool video_driver_find_driver(void)
       if (hwr && hw_render_context_is_gl(hwr->context_type))
       {
          RARCH_LOG("[Video]: Using HW render, OpenGL driver forced.\n");
-#if defined(HAVE_OPENGL_CORE) && 1
-         current_video = &video_gl_core;
+
+         /* If we have configured one of the HW render capable GL drivers, go with that. */
+         if (!string_is_equal(settings->arrays.video_driver, "gl") &&
+               !string_is_equal(settings->arrays.video_driver, "glcore"))
+         {
+#if defined(HAVE_OPENGL_CORE)
+            current_video = &video_gl_core;
+            RARCH_LOG("[Video]: Forcing \"glcore\" driver.\n");
 #else
-         current_video = &video_gl2;
+            current_video = &video_gl2;
+            RARCH_LOG("[Video]: Forcing \"gl\" driver.\n");
 #endif
+         }
+         else
+         {
+            RARCH_LOG("[Video]: Using configured \"%s\" driver for GL HW render.\n",
+                  settings->arrays.video_driver);
+         }
       }
 #endif
 
