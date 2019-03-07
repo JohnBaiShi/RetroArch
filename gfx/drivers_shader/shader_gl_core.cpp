@@ -616,6 +616,10 @@ public:
    void clear();
    void copy(const CommonResources &common, GLuint image);
    void copy_partial(const CommonResources &common, GLuint image, float rx, float ry);
+   bool is_complete() const
+   {
+      return complete;
+   }
 
    unsigned get_levels() const { return levels; }
    void generate_mips();
@@ -666,6 +670,11 @@ void Framebuffer::init()
 
    glGenTextures(1, &image);
    glBindTexture(GL_TEXTURE_2D, image);
+
+   if (size.width == 0)
+      size.width = 1;
+   if (size.height == 0)
+      size.height = 1;
 
    levels = num_miplevels(size.width, size.height);
    if (max_levels < levels)
@@ -1647,7 +1656,7 @@ void Pass::build_commands(
     * another render pass since the frontend will
     * want to overlay various things on top for
     * the passes that end up on-screen. */
-   if (!final_pass)
+   if (!final_pass && framebuffer->is_complete())
    {
       glBindFramebuffer(GL_FRAMEBUFFER, framebuffer->get_framebuffer());
       glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);

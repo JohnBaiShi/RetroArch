@@ -46,6 +46,63 @@
 
 static const struct video_ortho gl_core_default_ortho = {0, 1, 0, 1, -1, 1};
 
+static void gl_core_deinit_fences(gl_core_t *gl)
+{
+   unsigned i;
+   for (i = 0; i < gl->fence_count; i++)
+   {
+      if (gl->fences[i])
+         glDeleteSync(gl->fences[i]);
+   }
+   gl->fence_count = 0;
+   memset(gl->fences, 0, sizeof(gl->fences));
+}
+
+static bool gl_core_init_pbo_readback(gl_core_t *gl)
+{
+   int i;
+   glGenBuffers(GL_CORE_NUM_PBOS, gl->pbo_readback);
+
+   for (i = 0; i < GL_CORE_NUM_PBOS; i++)
+   {
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, gl->pbo_readback[i]);
+      glBufferData(GL_PIXEL_PACK_BUFFER, gl->vp.width * gl->vp.height * sizeof(uint32_t), NULL, GL_STREAM_READ);
+   }
+   glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+
+   struct scaler_ctx *scaler = &gl->pbo_readback_scaler;
+   scaler->in_width          = gl->vp.width;
+   scaler->in_height         = gl->vp.height;
+   scaler->out_width         = gl->vp.width;
+   scaler->out_height        = gl->vp.height;
+   scaler->in_stride         = gl->vp.width * sizeof(uint32_t);
+   scaler->out_stride        = gl->vp.width * 3;
+   scaler->in_fmt            = SCALER_FMT_ABGR8888;
+   scaler->out_fmt           = SCALER_FMT_BGR24;
+   scaler->scaler_type       = SCALER_TYPE_POINT;
+
+   if (!scaler_ctx_gen_filter(scaler))
+   {
+      gl->pbo_readback_enable = false;
+      RARCH_ERR("[GLCore]: Failed to initialize pixel conversion for PBO.\n");
+      glDeleteBuffers(4, gl->pbo_readback);
+      memset(gl->pbo_readback, 0, sizeof(gl->pbo_readback));
+      return false;
+   }
+
+   return true;
+}
+
+static void gl_core_deinit_pbo_readback(gl_core_t *gl)
+{
+   int i;
+   for (i = 0; i < GL_CORE_NUM_PBOS; i++)
+      if (gl->pbo_readback[i] != 0)
+         glDeleteBuffers(1, &gl->pbo_readback[i]);
+   memset(gl->pbo_readback, 0, sizeof(gl->pbo_readback));
+   scaler_ctx_gen_reset(&gl->pbo_readback_scaler);
+}
+
 #ifdef HAVE_OVERLAY
 static void gl_core_free_overlay(gl_core_t *gl)
 {
@@ -69,6 +126,64 @@ static void gl_core_free_scratch_vbos(gl_core_t *gl)
    for (i = 0; i < GL_CORE_NUM_VBOS; i++)
       if (gl->scratch_vbos[i])
          glDeleteBuffers(1, &gl->scratch_vbos[i]);
+}
+
+static void gl_core_slow_readback(gl_core_t *gl, void *buffer)
+{
+   glPixelStorei(GL_PACK_ALIGNMENT, 4);
+   glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+   glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+#ifndef HAVE_OPENGLES
+   glReadBuffer(GL_BACK);
+#endif
+
+   glReadPixels(gl->vp.x, gl->vp.y,
+                gl->vp.width, gl->vp.height,
+                GL_RGBA, GL_UNSIGNED_BYTE, buffer);
+}
+
+static void gl_core_pbo_async_readback(gl_core_t *gl)
+{
+   glBindBuffer(GL_PIXEL_PACK_BUFFER, gl->pbo_readback[gl->pbo_readback_index++]);
+   glPixelStorei(GL_PACK_ALIGNMENT, 4);
+   glPixelStorei(GL_PACK_ROW_LENGTH, 0);
+#ifndef HAVE_OPENGLES
+   glReadBuffer(GL_BACK);
+#endif
+   if (gl->pbo_readback_index >= GL_CORE_NUM_PBOS)
+      gl->pbo_readback_index = 0;
+   gl->pbo_readback_valid[gl->pbo_readback_index] = true;
+
+   glReadPixels(gl->vp.x, gl->vp.y,
+                gl->vp.width, gl->vp.height,
+                GL_RGBA, GL_UNSIGNED_BYTE, NULL);
+   glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+}
+
+static void gl_core_fence_iterate(gl_core_t *gl, unsigned hard_sync_frames)
+{
+   if (gl->fence_count < GL_CORE_NUM_FENCES)
+   {
+      /*
+       * We need to do some work after the flip, or we risk fencing too early.
+       * Do as little work as possible.
+       */
+      glEnable(GL_SCISSOR_TEST);
+      glScissor(0, 0, 1, 1);
+      glColorMask(GL_TRUE, GL_TRUE, GL_TRUE, GL_TRUE);
+      glClear(GL_COLOR_BUFFER_BIT);
+      glDisable(GL_SCISSOR_TEST);
+
+      gl->fences[gl->fence_count++] = glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+   }
+
+   while (gl->fence_count > hard_sync_frames)
+   {
+      glClientWaitSync(gl->fences[0], GL_SYNC_FLUSH_COMMANDS_BIT, 1000000000);
+      glDeleteSync(gl->fences[0]);
+      gl->fence_count--;
+      memmove(gl->fences, gl->fences + 1, gl->fence_count * sizeof(GLsync));
+   }
 }
 
 void gl_core_bind_scratch_vbo(gl_core_t *gl, const void *data, size_t size)
@@ -252,6 +367,8 @@ static void gl_core_destroy_resources(gl_core_t *gl)
 
    gl_core_free_overlay(gl);
    gl_core_free_scratch_vbos(gl);
+   gl_core_deinit_fences(gl);
+   gl_core_deinit_pbo_readback(gl);
    gl_core_deinit_hw_render(gl);
    free(gl);
 }
@@ -403,16 +520,18 @@ static void gl_core_set_projection(gl_core_t *gl,
 }
 
 static void gl_core_set_viewport(gl_core_t *gl,
-                                 video_frame_info_t *video_info,
                                  unsigned viewport_width,
                                  unsigned viewport_height,
                                  bool force_full, bool allow_rotate)
 {
    gfx_ctx_aspect_t aspect_data;
+   unsigned width, height;
    int x                    = 0;
    int y                    = 0;
    float device_aspect      = (float)viewport_width / viewport_height;
-   unsigned height          = video_info->height;
+   settings_t *settings     = config_get_ptr();
+
+   video_driver_get_size(&width, &height);
 
    aspect_data.aspect       = &device_aspect;
    aspect_data.width        = viewport_width;
@@ -420,7 +539,7 @@ static void gl_core_set_viewport(gl_core_t *gl,
 
    video_context_driver_translate_aspect(&aspect_data);
 
-   if (video_info->scale_integer && !force_full)
+   if (settings->bools.video_scale_integer && !force_full)
    {
       video_viewport_get_scaled_integer(&gl->vp,
                                         viewport_width, viewport_height,
@@ -433,13 +552,14 @@ static void gl_core_set_viewport(gl_core_t *gl,
       float desired_aspect = video_driver_get_aspect_ratio();
 
 #if defined(HAVE_MENU)
-      if (video_info->aspect_ratio_idx == ASPECT_RATIO_CUSTOM)
+      if (settings->uints.video_aspect_ratio_idx == ASPECT_RATIO_CUSTOM)
       {
+         const struct video_viewport *custom = video_viewport_get_custom();
          /* GL has bottom-left origin viewport. */
-         x      = video_info->custom_vp_x;
-         y      = height - video_info->custom_vp_y - video_info->custom_vp_height;
-         viewport_width  = video_info->custom_vp_width;
-         viewport_height = video_info->custom_vp_height;
+         x               = custom->x;
+         y               = height - custom->y - custom->height;
+         viewport_width  = custom->width;
+         viewport_height = custom->height;
       }
       else
 #endif
@@ -795,6 +915,7 @@ static void *gl_core_init(const video_info_t *video,
    const char *vendor                   = NULL;
    const char *renderer                 = NULL;
    const char *version                  = NULL;
+   char *error_string                   = NULL;
    gl_core_t *gl                        = (gl_core_t*)calloc(1, sizeof(gl_core_t));
    const gfx_ctx_driver_t *ctx_driver   = gl_core_get_context(gl);
    struct retro_hw_render_callback *hwr = video_driver_get_hw_context();
@@ -899,6 +1020,10 @@ static void *gl_core_init(const video_info_t *video,
 
    RARCH_LOG("[GLCore]: Using resolution %ux%u\n", temp_width, temp_height);
 
+   /* Set the viewport to fix recording, since it needs to know
+    * the viewport sizes before we start running. */
+   gl_core_set_viewport(gl, temp_width, temp_height, false, true);
+
    inp.input      = input;
    inp.input_data = input_data;
    video_context_driver_input_driver(&inp);
@@ -916,10 +1041,26 @@ static void *gl_core_init(const video_info_t *video,
                            FONT_DRIVER_RENDER_OPENGL_CORE_API);
    }
 
+   gl->pbo_readback_enable = settings->bools.video_gpu_record
+      && recording_is_enabled();
+
+   if (gl->pbo_readback_enable && gl_core_init_pbo_readback(gl))
+   {
+      RARCH_LOG("[GLCore]: Async PBO readback enabled.\n");
+   }
+
+   if (!gl_check_error(&error_string))
+   {
+      RARCH_ERR("%s\n", error_string);
+      free(error_string);
+      goto error;
+   }
+
    glGenVertexArrays(1, &gl->vao);
    glBindVertexArray(gl->vao);
-   gl_core_context_bind_hw_render(gl, true);
+   glBindVertexArray(0);
 
+   gl_core_context_bind_hw_render(gl, true);
    return gl;
 
 error:
@@ -1214,13 +1355,8 @@ static bool gl_core_set_shader(void *data,
 static void gl_core_set_viewport_wrapper(void *data, unsigned viewport_width,
                                          unsigned viewport_height, bool force_full, bool allow_rotate)
 {
-   video_frame_info_t video_info;
    gl_core_t *gl = (gl_core_t*)data;
-
-   video_driver_build_info(&video_info);
-
-   gl_core_set_viewport(gl, &video_info,
-                        viewport_width, viewport_height, force_full, allow_rotate);
+   gl_core_set_viewport(gl, viewport_width, viewport_height, force_full, allow_rotate);
 }
 
 static void gl_core_set_rotation(void *data, unsigned rotation)
@@ -1255,12 +1391,68 @@ static void gl_core_viewport_info(void *data, struct video_viewport *vp)
 static bool gl_core_read_viewport(void *data, uint8_t *buffer, bool is_idle)
 {
    gl_core_t *gl = (gl_core_t*)data;
+   unsigned num_pixels = 0;
+
    if (!gl)
       return false;
 
-   (void)data;
-   (void)buffer;
-   (void)is_idle;
+   gl_core_context_bind_hw_render(gl, false);
+   num_pixels = gl->vp.width * gl->vp.height;
+
+   if (gl->pbo_readback_enable)
+   {
+      const void *ptr = NULL;
+      struct scaler_ctx *ctx = &gl->pbo_readback_scaler;
+
+      /* Don't readback if we're in menu mode.
+       * We haven't buffered up enough frames yet, come back later. */
+      if (!gl->pbo_readback_valid[gl->pbo_readback_index])
+         goto error;
+
+      gl->pbo_readback_valid[gl->pbo_readback_index] = false;
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, gl->pbo_readback[gl->pbo_readback_index]);
+
+      ptr = glMapBufferRange(GL_PIXEL_PACK_BUFFER, 0, num_pixels * sizeof(uint32_t), GL_MAP_READ_BIT);
+      scaler_ctx_scale_direct(ctx, buffer, ptr);
+      glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
+      glBindBuffer(GL_PIXEL_PACK_BUFFER, 0);
+   }
+   else
+   {
+      /* Use slow synchronous readbacks. Use this with plain screenshots
+         as we don't really care about performance in this case. */
+
+      /* GLES only guarantees GL_RGBA/GL_UNSIGNED_BYTE
+       * readbacks so do just that.
+       * GLES also doesn't support reading back data
+       * from front buffer, so render a cached frame
+       * and have gl_frame() do the readback while it's
+       * in the back buffer.
+       *
+       * Keep codepath similar for GLES and desktop GL.
+       */
+      gl->readback_buffer_screenshot = malloc(num_pixels * sizeof(uint32_t));
+
+      if (!gl->readback_buffer_screenshot)
+         goto error;
+
+      if (!is_idle)
+         video_driver_cached_frame();
+
+      video_frame_convert_rgba_to_bgr(
+            (const void*)gl->readback_buffer_screenshot,
+            buffer,
+            num_pixels);
+
+      free(gl->readback_buffer_screenshot);
+      gl->readback_buffer_screenshot = NULL;
+   }
+
+   gl_core_context_bind_hw_render(gl, true);
+   return true;
+
+error:
+   gl_core_context_bind_hw_render(gl, true);
    return false;
 }
 
@@ -1361,13 +1553,15 @@ static bool gl_core_frame(void *data, const void *frame,
    gl_core_context_bind_hw_render(gl, false);
    glBindVertexArray(gl->vao);
 
+   if (frame)
+      gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
+
    streamed = &gl->textures[gl->textures_index];
    if (frame)
    {
       if (!gl->hw_render_enable)
       {
          gl_core_update_cpu_texture(gl, streamed, frame, frame_width, frame_height, pitch);
-         gl->textures_index = (gl->textures_index + 1) & (GL_CORE_NUM_TEXTURES - 1);
       }
       else
       {
@@ -1376,7 +1570,13 @@ static bool gl_core_frame(void *data, const void *frame,
       }
    }
 
-   gl_core_set_viewport(gl, video_info, video_info->width, video_info->height, false, true);
+   if (gl->should_resize)
+   {
+      video_info->cb_set_resize(video_info->context_data, video_info->width, video_info->height);
+      gl->should_resize = false;
+   }
+
+   gl_core_set_viewport(gl, video_info->width, video_info->height, false, true);
 
    memset(&texture, 0, sizeof(texture));
 
@@ -1388,6 +1588,11 @@ static bool gl_core_frame(void *data, const void *frame,
       texture.format = GL_RGBA8;
       texture.padded_width = gl->hw_render_max_width;
       texture.padded_height = gl->hw_render_max_height;
+
+	  if (texture.width == 0)
+		  texture.width = 1;
+	  if (texture.height == 0)
+		  texture.height = 1;
    }
    else
    {
@@ -1445,6 +1650,20 @@ static bool gl_core_frame(void *data, const void *frame,
    video_info->cb_update_window_title(
          video_info->context_data, video_info);
 
+   if (gl->readback_buffer_screenshot)
+   {
+      /* For screenshots, just do the regular slow readback. */
+      gl_core_slow_readback(gl, gl->readback_buffer_screenshot);
+   }
+   else if (gl->pbo_readback_enable)
+   {
+#ifdef HAVE_MENU
+      /* Don't readback if we're in menu mode. */
+      if (!gl->menu_texture_enable)
+#endif
+         gl_core_pbo_async_readback(gl);
+   }
+
    /* Disable BFI during fast forward, slow-motion,
     * and pause to prevent flicker. */
    if (
@@ -1458,6 +1677,13 @@ static bool gl_core_frame(void *data, const void *frame,
    }
 
    video_info->cb_swap_buffers(video_info->context_data, video_info);
+
+   if (video_info->hard_sync &&
+       video_info->input_driver_nonblock_state &&
+       !gl->menu_texture_enable)
+   {
+      gl_core_fence_iterate(gl, video_info->hard_sync_frames);
+   }
 
    glBindVertexArray(0);
    gl_core_context_bind_hw_render(gl, true);

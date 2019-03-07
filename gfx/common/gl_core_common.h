@@ -39,7 +39,9 @@
 RETRO_BEGIN_DECLS
 
 #define GL_CORE_NUM_TEXTURES 4
+#define GL_CORE_NUM_PBOS 4
 #define GL_CORE_NUM_VBOS 256
+#define GL_CORE_NUM_FENCES 8
 struct gl_core_streamed_texture
 {
    GLuint tex;
@@ -120,6 +122,16 @@ typedef struct gl_core
    unsigned hw_render_max_width;
    unsigned hw_render_max_height;
    bool hw_render_bottom_left;
+
+   GLsync fences[GL_CORE_NUM_FENCES];
+   unsigned fence_count;
+
+   void *readback_buffer_screenshot;
+   struct scaler_ctx pbo_readback_scaler;
+   bool pbo_readback_enable;
+   unsigned pbo_readback_index;
+   bool pbo_readback_valid[GL_CORE_NUM_PBOS];
+   GLuint pbo_readback[GL_CORE_NUM_PBOS];
 } gl_core_t;
 
 void gl_core_bind_scratch_vbo(gl_core_t *gl, const void *data, size_t size);
