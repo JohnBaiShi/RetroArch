@@ -204,21 +204,45 @@ VkResult vulkan_emulated_mailbox_acquire_next_image_blocking(
    return res;
 }
 
+VkResult vulkan_emulated_mailbox_present(
+      struct vulkan_emulated_mailbox *mailbox,
+      unsigned index)
+{
+   if (mailbox->swapchain == VK_NULL_HANDLE)
+      return VK_ERROR_OUT_OF_DATE_KHR;
+   if (mailbox->result != VK_SUCCESS)
+      return mailbox->result;
+   assert(!mailbox->has_pending_request);
+   mailbox->has_pending_request = true;
+   mailbox->index = index;
+
+   slock_lock(mailbox->lock);
+   mailbox->request_present = true;
+   mailbox->request_acquire = true;
+   scond_signal(mailbox->cond);
+   slock_unlock(mailbox->lock);
+
+   return VK_SUCCESS;
+}
+
 static void vulkan_emulated_mailbox_loop(void *userdata)
 {
    VkFence fence;
+   VkResult res = VK_SUCCESS;
    VkFenceCreateInfo info = { VK_STRUCTURE_TYPE_FENCE_CREATE_INFO };
    struct vulkan_emulated_mailbox *mailbox = (struct vulkan_emulated_mailbox*)userdata;
 
    if (!mailbox)
       return;
 
-   vkCreateFence(mailbox->device, &info, NULL, &fence);
+   vkCreateFence(mailbox->context->device, &info, NULL, &fence);
 
    for (;;)
    {
+      bool acquire = false;
+      bool present = false;
       slock_lock(mailbox->lock);
-      while (!mailbox->dead && !mailbox->request_acquire)
+      while (!mailbox->dead && !mailbox->request_acquire && !mailbox->request_present)
          scond_wait(mailbox->cond, mailbox->lock);
 
       if (mailbox->dead)
@@ -227,40 +251,69 @@ static void vulkan_emulated_mailbox_loop(void *userdata)
          break;
       }
 
+      acquire = mailbox->request_acquire;
+      present = mailbox->request_present;
       mailbox->request_acquire = false;
+      mailbox->request_present = false;
       slock_unlock(mailbox->lock);
 
-      mailbox->result = vkAcquireNextImageKHR(mailbox->device, mailbox->swapchain, UINT64_MAX,
-            VK_NULL_HANDLE, fence, &mailbox->index);
-
-      /* VK_SUBOPTIMAL_KHR can be returned on Android 10 when prerotate is not dealt with.
-       * This is not an error we need to care about, and we'll treat it as SUCCESS. */
-      if (mailbox->result == VK_SUBOPTIMAL_KHR)
-         mailbox->result = VK_SUCCESS;
-
-      if (mailbox->result == VK_SUCCESS)
-         vkWaitForFences(mailbox->device, 1, &fence, true, UINT64_MAX);
-      vkResetFences(mailbox->device, 1, &fence);
-
-      if (mailbox->result == VK_SUCCESS)
+      if (present && res == VK_SUCCESS)
       {
-         slock_lock(mailbox->lock);
-         mailbox->acquired = true;
-         scond_signal(mailbox->cond);
-         slock_unlock(mailbox->lock);
+         VkPresentInfoKHR present = { VK_STRUCTURE_TYPE_PRESENT_INFO_KHR };
+         VkResult err = VK_SUCCESS;
+
+         present.swapchainCount     = 1;
+         present.pSwapchains        = &mailbox->swapchain;
+         present.pImageIndices      = &mailbox->index;
+         present.pResults           = &res;
+         present.waitSemaphoreCount = 1;
+         present.pWaitSemaphores    = &mailbox->context->swapchain_semaphores[mailbox->index];
+
+#ifdef HAVE_THREADS
+         slock_lock(mailbox->context->queue_lock);
+#endif
+         err = vkQueuePresentKHR(mailbox->context->queue, &present);
+         if (err != VK_SUCCESS)
+            res = err;
+#ifdef HAVE_THREADS
+         slock_unlock(mailbox->context->queue_lock);
+#endif
       }
+
+      if (acquire && res == VK_SUCCESS)
+      {
+         res = vkAcquireNextImageKHR(mailbox->context->device, mailbox->swapchain, UINT64_MAX,
+               VK_NULL_HANDLE, fence, &mailbox->index);
+
+#ifdef ANDROID
+         /* VK_SUBOPTIMAL_KHR can be returned on Android 10 when prerotate is not dealt with.
+          * This is not an error we need to care about, and we'll treat it as SUCCESS. */
+         if (res == VK_SUBOPTIMAL_KHR)
+            res = VK_SUCCESS;
+#endif
+
+         if (res == VK_SUCCESS || res == VK_SUBOPTIMAL_KHR)
+            vkWaitForFences(mailbox->context->device, 1, &fence, true, UINT64_MAX);
+         vkResetFences(mailbox->context->device, 1, &fence);
+      }
+
+      slock_lock(mailbox->lock);
+      mailbox->acquired = true;
+      mailbox->result = res;
+      scond_signal(mailbox->cond);
+      slock_unlock(mailbox->lock);
    }
 
-   vkDestroyFence(mailbox->device, fence, NULL);
+   vkDestroyFence(mailbox->context->device, fence, NULL);
 }
 
 bool vulkan_emulated_mailbox_init(
       struct vulkan_emulated_mailbox *mailbox,
-      VkDevice device,
+      vulkan_context_t *context,
       VkSwapchainKHR swapchain)
 {
    memset(mailbox, 0, sizeof(*mailbox));
-   mailbox->device    = device;
+   mailbox->context = context;
    mailbox->swapchain = swapchain;
 
    mailbox->cond      = scond_new();
@@ -1746,16 +1799,15 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
    vk->emulate_mailbox = vk->fullscreen;
 #endif
 
-   vk->use_wsi_semaphore = false;
-   if (!vk->emulate_mailbox)
+   if (vk->context.gpu_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
    {
-       if (vk->context.gpu_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
-       {
-           vk->use_wsi_semaphore = true;
-           RARCH_LOG("[Vulkan]: Using semaphores for WSI acquire.\n");
-       }
-       else
-           RARCH_LOG("[Vulkan]: Using fences for WSI acquire.\n");
+      vk->use_wsi_semaphore = true;
+      RARCH_LOG("[Vulkan]: Using semaphores for WSI acquire.\n");
+   }
+   else
+   {
+      vk->use_wsi_semaphore = false;
+      RARCH_LOG("[Vulkan]: Using fences for WSI acquire.\n");
    }
 
    RARCH_LOG("[Vulkan]: Using GPU: %s\n", vk->context.gpu_properties.deviceName);
@@ -2615,32 +2667,39 @@ void vulkan_present(gfx_ctx_vulkan_data_t *vk, unsigned index)
    present.waitSemaphoreCount      = 1;
    present.pWaitSemaphores         = &vk->context.swapchain_semaphores[index];
 
-   /* Better hope QueuePresent doesn't block D: */
+   if (vk->emulating_mailbox)
+   {
+      err = vulkan_emulated_mailbox_present(&vk->mailbox, index);
+   }
+   else
+   {
+      /* Better hope QueuePresent doesn't block D: */
 #ifdef HAVE_THREADS
-   slock_lock(vk->context.queue_lock);
+      slock_lock(vk->context.queue_lock);
 #endif
-   err = vkQueuePresentKHR(vk->context.queue, &present);
+      err = vkQueuePresentKHR(vk->context.queue, &present);
 
-   /* VK_SUBOPTIMAL_KHR can be returned on Android 10 when prerotate is not dealt with.
-    * This is not an error we need to care about, and we'll treat it as SUCCESS. */
-   if (result == VK_SUBOPTIMAL_KHR)
-      result = VK_SUCCESS;
-   if (err == VK_SUBOPTIMAL_KHR)
-      err = VK_SUCCESS;
+      /* VK_SUBOPTIMAL_KHR can be returned on Android 10 when prerotate is not dealt with.
+       * This is not an error we need to care about, and we'll treat it as SUCCESS. */
+      if (result == VK_SUBOPTIMAL_KHR)
+         result = VK_SUCCESS;
+      if (err == VK_SUBOPTIMAL_KHR)
+         err = VK_SUCCESS;
 
 #ifdef WSI_HARDENING_TEST
-   trigger_spurious_error_vkresult(&err);
+      trigger_spurious_error_vkresult(&err);
 #endif
+
+#ifdef HAVE_THREADS
+      slock_unlock(vk->context.queue_lock);
+#endif
+   }
 
    if (err != VK_SUCCESS || result != VK_SUCCESS)
    {
       RARCH_LOG("[Vulkan]: QueuePresent failed, destroying swapchain.\n");
       vulkan_destroy_swapchain(vk);
    }
-
-#ifdef HAVE_THREADS
-   slock_unlock(vk->context.queue_lock);
-#endif
 }
 
 void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
@@ -2703,6 +2762,12 @@ void vulkan_context_destroy(gfx_ctx_vulkan_data_t *vk,
    }
 }
 
+static void vulkan_recycle_acquire_semaphore(struct vulkan_context *ctx, VkSemaphore sem)
+{
+   assert(ctx->num_recycled_acquire_semaphores < VULKAN_MAX_SWAPCHAIN_IMAGES);
+   ctx->swapchain_recycled_semaphores[ctx->num_recycled_acquire_semaphores++] = sem;
+}
+
 static void vulkan_acquire_clear_fences(gfx_ctx_vulkan_data_t *vk)
 {
    unsigned i;
@@ -2715,6 +2780,10 @@ static void vulkan_acquire_clear_fences(gfx_ctx_vulkan_data_t *vk)
          vk->context.swapchain_fences[i] = VK_NULL_HANDLE;
       }
       vk->context.swapchain_fences_signalled[i] = false;
+
+      if (vk->context.swapchain_wait_semaphores[i])
+         vulkan_recycle_acquire_semaphore(&vk->context, vk->context.swapchain_wait_semaphores[i]);
+      vk->context.swapchain_wait_semaphores[i] = VK_NULL_HANDLE;
    }
 
    vk->context.current_frame_index = 0;
@@ -2734,12 +2803,6 @@ static VkSemaphore vulkan_get_wsi_acquire_semaphore(struct vulkan_context *ctx)
    ctx->swapchain_recycled_semaphores[ctx->num_recycled_acquire_semaphores] =
       VK_NULL_HANDLE;
    return sem;
-}
-
-static void vulkan_recycle_acquire_semaphore(struct vulkan_context *ctx, VkSemaphore sem)
-{
-   assert(ctx->num_recycled_acquire_semaphores < VULKAN_MAX_SWAPCHAIN_IMAGES);
-   ctx->swapchain_recycled_semaphores[ctx->num_recycled_acquire_semaphores++] = sem;
 }
 
 static void vulkan_acquire_wait_fences(gfx_ctx_vulkan_data_t *vk)
@@ -2978,7 +3041,7 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
 
       if (vk->emulating_mailbox && vk->mailbox.swapchain == VK_NULL_HANDLE)
       {
-         vulkan_emulated_mailbox_init(&vk->mailbox, vk->context.device, vk->swapchain);
+         vulkan_emulated_mailbox_init(&vk->mailbox, &vk->context, vk->swapchain);
          vk->created_new_swapchain = false;
          return true;
       }
@@ -3011,6 +3074,10 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
          return true;
       }
    }
+
+   if (vk->context.swapchain_acquire_semaphore)
+      vkDestroySemaphore(vk->context.device, vk->context.swapchain_acquire_semaphore, NULL);
+   vk->context.swapchain_acquire_semaphore = VK_NULL_HANDLE;
 
    vulkan_emulated_mailbox_deinit(&vk->mailbox);
 
@@ -3250,7 +3317,7 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
    vulkan_create_wait_fences(vk);
 
    if (vk->emulating_mailbox)
-      vulkan_emulated_mailbox_init(&vk->mailbox, vk->context.device, vk->swapchain);
+      vulkan_emulated_mailbox_init(&vk->mailbox, &vk->context, vk->swapchain);
 
    return true;
 }

@@ -133,8 +133,8 @@ typedef struct vulkan_context
 
 struct vulkan_emulated_mailbox
 {
+   vulkan_context_t *context;
    sthread_t *thread;
-   VkDevice device;
    VkSwapchainKHR swapchain;
    slock_t *lock;
    scond_t *cond;
@@ -142,16 +142,18 @@ struct vulkan_emulated_mailbox
    unsigned index;
    bool acquired;
    bool request_acquire;
+   bool request_present;
    bool dead;
    bool has_pending_request;
    VkResult result;
 };
 
 bool vulkan_emulated_mailbox_init(struct vulkan_emulated_mailbox *mailbox,
-      VkDevice device, VkSwapchainKHR swapchain);
+      vulkan_context_t *context, VkSwapchainKHR swapchain);
 void vulkan_emulated_mailbox_deinit(struct vulkan_emulated_mailbox *mailbox);
 VkResult vulkan_emulated_mailbox_acquire_next_image(struct vulkan_emulated_mailbox *mailbox, unsigned *index);
 VkResult vulkan_emulated_mailbox_acquire_next_image_blocking(struct vulkan_emulated_mailbox *mailbox, unsigned *index);
+VkResult vulkan_emulated_mailbox_present(struct vulkan_emulated_mailbox *mailbox, unsigned index);
 
 typedef struct gfx_ctx_vulkan_data
 {
