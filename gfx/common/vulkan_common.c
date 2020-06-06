@@ -42,10 +42,6 @@
 #define VENDOR_ID_NV 0x10DE
 #define VENDOR_ID_INTEL 0x8086
 
-#if defined(_WIN32) || defined(ANDROID)
-#define VULKAN_EMULATE_MAILBOX
-#endif
-
 static dylib_t                       vulkan_library;
 static VkInstance                    cached_instance_vk;
 static VkDevice                      cached_device_vk;
@@ -1793,11 +1789,17 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
    vkGetPhysicalDeviceMemoryProperties(vk->context.gpu,
          &vk->context.memory_properties);
 
-#ifdef VULKAN_EMULATE_MAILBOX
+#ifdef _WIN32
    /* Win32 windowed mode seems to deal just fine with toggling VSync.
     * Fullscreen however ... */
    vk->emulate_mailbox = vk->fullscreen;
+#elif defined(ANDROID)
+   vk->emulate_mailbox = true;
+   vk->emulate_mailbox_async_flip = true;
 #endif
+
+   vk->emulate_mailbox = true;
+   vk->emulate_mailbox_async_flip = true;
 
    if (vk->context.gpu_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
    {
@@ -1970,6 +1972,8 @@ bool vulkan_context_init(gfx_ctx_vulkan_data_t *vk,
    instance_extensions[ext_count++] = "VK_EXT_debug_report";
    static const char *instance_layers[] = { "VK_LAYER_KHRONOS_validation" };
 #endif
+
+   vk->context.ctx = vk;
 
    bool use_instance_ext;
    struct retro_hw_render_context_negotiation_interface_vulkan *iface =
@@ -2660,19 +2664,19 @@ void vulkan_present(gfx_ctx_vulkan_data_t *vk, unsigned index)
       return;
    }
 
-   present.swapchainCount          = 1;
-   present.pSwapchains             = &vk->swapchain;
-   present.pImageIndices           = &index;
-   present.pResults                = &result;
-   present.waitSemaphoreCount      = 1;
-   present.pWaitSemaphores         = &vk->context.swapchain_semaphores[index];
-
-   if (vk->emulating_mailbox)
+   if (vk->emulating_mailbox && vk->emulate_mailbox_async_present)
    {
       err = vulkan_emulated_mailbox_present(&vk->mailbox, index);
    }
    else
    {
+      present.swapchainCount          = 1;
+      present.pSwapchains             = &vk->swapchain;
+      present.pImageIndices           = &index;
+      present.pResults                = &result;
+      present.waitSemaphoreCount      = 1;
+      present.pWaitSemaphores         = &vk->context.swapchain_semaphores[index];
+
       /* Better hope QueuePresent doesn't block D: */
 #ifdef HAVE_THREADS
       slock_lock(vk->context.queue_lock);
@@ -2888,11 +2892,19 @@ retry:
 
    if (vk->emulating_mailbox)
    {
-      /* Non-blocking acquire. If we don't get a swapchain frame right away,
-       * just skip rendering to the swapchain this frame, similar to what
-       * MAILBOX would do. */
-      err   = vulkan_emulated_mailbox_acquire_next_image(
-            &vk->mailbox, &vk->context.current_swapchain_index);
+      if (vk->emulating_mailbox_blocking)
+      {
+         err = vulkan_emulated_mailbox_acquire_next_image_blocking(
+               &vk->mailbox, &vk->context.current_swapchain_index);
+      }
+      else
+      {
+         /* Non-blocking acquire. If we don't get a swapchain frame right away,
+          * just skip rendering to the swapchain this frame, similar to what
+          * MAILBOX would do. */
+         err = vulkan_emulated_mailbox_acquire_next_image(
+               &vk->mailbox, &vk->context.current_swapchain_index);
+      }
    }
    else
    {
@@ -2951,9 +2963,7 @@ retry:
 
    if (err == VK_NOT_READY || err == VK_TIMEOUT)
    {
-      /* Just pretend we have a swapchain index, round-robin style. */
-      vk->context.current_swapchain_index =
-         (vk->context.current_swapchain_index + 1) % vk->context.num_swapchain_images;
+      /* Do nothing. We won't render this frame to swapchain. */
    }
    else if (err == VK_ERROR_OUT_OF_DATE_KHR || err == VK_SUBOPTIMAL_KHR)
    {
@@ -2994,6 +3004,16 @@ retry:
    vulkan_acquire_wait_fences(vk);
 }
 
+void vulkan_on_frame_begin(struct vulkan_context *context)
+{
+   if (!context->has_acquired_swapchain)
+   {
+      context->ctx->emulating_mailbox_blocking = context->ctx->mailbox_blocking_on_frame_begin;
+      vulkan_acquire_next_image(context->ctx);
+      context->ctx->emulating_mailbox_blocking = false;
+   }
+}
+
 bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
       unsigned width, unsigned height,
       unsigned swap_interval)
@@ -3019,13 +3039,19 @@ bool vulkan_create_swapchain(gfx_ctx_vulkan_data_t *vk,
    vkDeviceWaitIdle(vk->context.device);
    vulkan_acquire_clear_fences(vk);
 
+   vk->emulating_mailbox = false;
+   vk->mailbox_blocking_on_frame_begin = false;
+
    if (swap_interval == 0 && vk->emulate_mailbox)
    {
       swap_interval          = 1;
       vk->emulating_mailbox  = true;
    }
-   else
-      vk->emulating_mailbox  = false;
+   else if (swap_interval != 0 && vk->emulate_mailbox_async_flip)
+   {
+      vk->emulating_mailbox  = true;
+      vk->mailbox_blocking_on_frame_begin = true;
+   }
 
    vk->created_new_swapchain = true;
 

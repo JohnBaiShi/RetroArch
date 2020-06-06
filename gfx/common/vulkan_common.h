@@ -87,6 +87,8 @@ enum vulkan_wsi_type
    VULKAN_WSI_MVK_IOS,
 };
 
+typedef struct gfx_ctx_vulkan_data gfx_ctx_vulkan_data_t;
+
 typedef struct vulkan_context
 {
    bool invalid_swapchain;
@@ -129,6 +131,8 @@ typedef struct vulkan_context
 #ifdef VULKAN_DEBUG
    VkDebugReportCallbackEXT debug_callback;
 #endif
+
+   gfx_ctx_vulkan_data_t *ctx;
 } vulkan_context_t;
 
 struct vulkan_emulated_mailbox
@@ -155,12 +159,20 @@ VkResult vulkan_emulated_mailbox_acquire_next_image(struct vulkan_emulated_mailb
 VkResult vulkan_emulated_mailbox_acquire_next_image_blocking(struct vulkan_emulated_mailbox *mailbox, unsigned *index);
 VkResult vulkan_emulated_mailbox_present(struct vulkan_emulated_mailbox *mailbox, unsigned index);
 
-typedef struct gfx_ctx_vulkan_data
+void vulkan_on_frame_begin(struct vulkan_context *context);
+
+struct gfx_ctx_vulkan_data
 {
    bool need_new_swapchain;
    bool created_new_swapchain;
+
    bool emulate_mailbox;
+   bool emulate_mailbox_async_flip;
+   bool emulate_mailbox_async_present;
+
    bool emulating_mailbox;
+   bool emulating_mailbox_blocking;
+   bool mailbox_blocking_on_frame_begin;
    /* If set, prefer a path where we use
     * semaphores instead of fences for vkAcquireNextImageKHR.
     * Helps workaround certain performance issues on some drivers. */
@@ -173,7 +185,7 @@ typedef struct gfx_ctx_vulkan_data
    /* Used to check if we need to use mailbox emulation or not.
     * Only relevant on Windows for now. */
    bool fullscreen;
-} gfx_ctx_vulkan_data_t;
+};
 
 struct vulkan_display_surface_info
 {

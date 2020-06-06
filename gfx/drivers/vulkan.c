@@ -1621,6 +1621,8 @@ static void vulkan_inject_black_frame(vk_t *vk, video_frame_info_t *video_info,
    VkSubmitInfo submit_info                      = {
       VK_STRUCTURE_TYPE_SUBMIT_INFO };
 
+   vulkan_on_frame_begin(vk->context);
+
    const VkClearColorValue clear_color = {{ 0.0f, 0.0f, 0.0f, 1.0f }};
    const VkImageSubresourceRange range = { VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1 };
    unsigned frame_index                = vk->context->current_frame_index;
@@ -1652,13 +1654,15 @@ static void vulkan_inject_black_frame(vk_t *vk, video_frame_info_t *video_info,
 
    submit_info.commandBufferCount   = 1;
    submit_info.pCommandBuffers      = &vk->cmd;
-   if (vk->context->swapchain_semaphores[swapchain_index] != VK_NULL_HANDLE)
+   if (vk->context->has_acquired_swapchain &&
+         vk->context->swapchain_semaphores[swapchain_index] != VK_NULL_HANDLE)
    {
       submit_info.signalSemaphoreCount = 1;
       submit_info.pSignalSemaphores = &vk->context->swapchain_semaphores[swapchain_index];
    }
 
-   if (vk->context->has_acquired_swapchain && vk->context->swapchain_acquire_semaphore != VK_NULL_HANDLE)
+   if (vk->context->has_acquired_swapchain &&
+         vk->context->swapchain_acquire_semaphore != VK_NULL_HANDLE)
    {
       static const VkPipelineStageFlags wait_stage =
          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -1710,6 +1714,8 @@ static bool vulkan_frame(void *data, const void *frame,
    struct font_params *osd_params                = (struct font_params*)
       &video_info->osd_stat_params;
    bool menu_is_alive                            = video_info->menu_is_alive;
+
+   vulkan_on_frame_begin(vk->context);
 
    VkCommandBufferBeginInfo begin_info           = {
       VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO };
@@ -2119,19 +2125,23 @@ static bool vulkan_frame(void *data, const void *frame,
       vk->hw.valid_semaphore = false;
 
       /* We allocated space for this. */
-      if (vk->context->has_acquired_swapchain && vk->context->swapchain_acquire_semaphore != VK_NULL_HANDLE)
+      if (vk->context->has_acquired_swapchain &&
+            vk->context->swapchain_acquire_semaphore != VK_NULL_HANDLE)
       {
          assert(!vk->context->swapchain_wait_semaphores[frame_index]);
          vk->context->swapchain_wait_semaphores[frame_index] =
             vk->context->swapchain_acquire_semaphore;
          vk->context->swapchain_acquire_semaphore = VK_NULL_HANDLE;
 
-         vk->hw.semaphores[submit_info.waitSemaphoreCount] = vk->context->swapchain_wait_semaphores[frame_index];
-         vk->hw.wait_dst_stages[submit_info.waitSemaphoreCount] = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+         vk->hw.semaphores[submit_info.waitSemaphoreCount] =
+            vk->context->swapchain_wait_semaphores[frame_index];
+         vk->hw.wait_dst_stages[submit_info.waitSemaphoreCount] =
+            VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
          submit_info.waitSemaphoreCount++;
       }
    }
-   else if (vk->context->has_acquired_swapchain && vk->context->swapchain_acquire_semaphore != VK_NULL_HANDLE)
+   else if (vk->context->has_acquired_swapchain &&
+         vk->context->swapchain_acquire_semaphore != VK_NULL_HANDLE)
    {
       static const VkPipelineStageFlags wait_stage =
          VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -2142,7 +2152,8 @@ static bool vulkan_frame(void *data, const void *frame,
       vk->context->swapchain_acquire_semaphore = VK_NULL_HANDLE;
 
       submit_info.waitSemaphoreCount = 1;
-      submit_info.pWaitSemaphores = &vk->context->swapchain_wait_semaphores[frame_index];
+      submit_info.pWaitSemaphores =
+         &vk->context->swapchain_wait_semaphores[frame_index];
       submit_info.pWaitDstStageMask = &wait_stage;
    }
 
