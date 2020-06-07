@@ -1797,11 +1797,8 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
 #elif defined(ANDROID)
    vk->emulate_mailbox = true;
    vk->emulate_mailbox_async_flip = true;
-#endif
-
-   vk->emulate_mailbox = true;
-   vk->emulate_mailbox_async_flip = true;
    vk->emulate_mailbox_async_present = true;
+#endif
 
    if (vk->context.gpu_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
    {
