@@ -32,6 +32,7 @@
 #include <retro_timers.h>
 #include "../../configuration.h"
 #include "../include/vulkan/vulkan.h"
+#include "libretro-common/include/features/features_cpu.h"
 #include <retro_assert.h>
 #include "vksym.h"
 #include <libretro_vulkan.h>
@@ -1800,6 +1801,7 @@ static bool vulkan_context_init_device(gfx_ctx_vulkan_data_t *vk)
 
    vk->emulate_mailbox = true;
    vk->emulate_mailbox_async_flip = true;
+   vk->emulate_mailbox_async_present = true;
 
    if (vk->context.gpu_properties.deviceType == VK_PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU)
    {
@@ -2819,13 +2821,20 @@ static void vulkan_acquire_wait_fences(gfx_ctx_vulkan_data_t *vk)
        (vk->context.current_frame_index + 1) %
        vk->context.num_swapchain_images;
 
+   RARCH_LOG("Frame index: %u.\n", vk->context.current_frame_index);
+
    unsigned index      = vk->context.current_frame_index;
    VkFence *next_fence = &vk->context.swapchain_fences[index];
 
    if (*next_fence != VK_NULL_HANDLE)
    {
       if (vk->context.swapchain_fences_signalled[index])
+      {
+         uint64_t t0 = cpu_features_get_time_usec();
          vkWaitForFences(vk->context.device, 1, next_fence, true, UINT64_MAX);
+         uint64_t t1 = cpu_features_get_time_usec();
+         RARCH_LOG("[Vulkan]: vkWaitForFences for %u us.\n", (unsigned)(t1 - t0));
+      }
       vkResetFences(vk->context.device, 1, next_fence);
    }
    else
@@ -3001,7 +3010,11 @@ retry:
       vkCreateSemaphore(vk->context.device, &sem_info,
             NULL, &vk->context.swapchain_semaphores[index]);
    }
+
+   uint64_t wait0 = cpu_features_get_time_usec();
    vulkan_acquire_wait_fences(vk);
+   uint64_t wait1 = cpu_features_get_time_usec();
+   RARCH_LOG("[Vulkan]: acquire wait fences %u us.\n", (unsigned)(wait1 - wait0));
 }
 
 void vulkan_on_frame_begin(struct vulkan_context *context)
