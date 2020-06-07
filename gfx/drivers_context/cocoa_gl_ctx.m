@@ -642,7 +642,8 @@ static void cocoagl_gfx_ctx_swap_buffers(void *data)
       case GFX_CTX_VULKAN_API:
 #ifdef HAVE_VULKAN
          vulkan_present(&cocoa_ctx->vk, cocoa_ctx->vk.context.current_swapchain_index);
-         vulkan_acquire_next_image(&cocoa_ctx->vk);
+         if (!cocoa_ctx->vk.emulating_mailbox)
+            vulkan_acquire_next_image(&cocoa_ctx->vk);
 #endif
          break;
       case GFX_CTX_NONE:

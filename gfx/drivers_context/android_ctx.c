@@ -525,7 +525,8 @@ static void android_gfx_ctx_swap_buffers(void *data)
       case GFX_CTX_VULKAN_API:
 #ifdef HAVE_VULKAN
          vulkan_present(&and->vk, and->vk.context.current_swapchain_index);
-         vulkan_acquire_next_image(&and->vk);
+         if (!and->vk.emulating_mailbox)
+            vulkan_acquire_next_image(&and->vk);
 #endif
          break;
       case GFX_CTX_NONE:

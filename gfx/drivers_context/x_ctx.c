@@ -366,14 +366,9 @@ static void gfx_ctx_x_swap_buffers(void *data)
       case GFX_CTX_VULKAN_API:
       {
 #ifdef HAVE_VULKAN
-         uint64_t t0 = cpu_features_get_time_usec();
          vulkan_present(&x->vk, x->vk.context.current_swapchain_index);
-         uint64_t t1 = cpu_features_get_time_usec();
          if (!x->vk.emulating_mailbox)
             vulkan_acquire_next_image(&x->vk);
-         uint64_t t2 = cpu_features_get_time_usec();
-         RARCH_LOG("[Vulkan]: Present time: %u usec.\n", (unsigned)(t1 - t0));
-         RARCH_LOG("[Vulkan]: Acquire time: %u usec.\n", (unsigned)(t2 - t1));
 #endif
       }
          break;

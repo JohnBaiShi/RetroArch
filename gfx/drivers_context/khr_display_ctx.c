@@ -246,7 +246,8 @@ static void gfx_ctx_khr_display_swap_buffers(void *data)
 {
    khr_display_ctx_data_t *khr = (khr_display_ctx_data_t*)data;
    vulkan_present(&khr->vk, khr->vk.context.current_swapchain_index);
-   vulkan_acquire_next_image(&khr->vk);
+   if (!khr->vk.emulating_mailbox)
+      vulkan_acquire_next_image(&khr->vk);
 }
 
 static gfx_ctx_proc_t gfx_ctx_khr_display_get_proc_address(const char *symbol)

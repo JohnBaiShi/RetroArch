@@ -1834,7 +1834,8 @@ static void gfx_ctx_wl_swap_buffers(void *data)
       case GFX_CTX_VULKAN_API:
 #ifdef HAVE_VULKAN
          vulkan_present(&wl->vk, wl->vk.context.current_swapchain_index);
-         vulkan_acquire_next_image(&wl->vk);
+         if (!wl->vk.emulating_mailbox)
+            vulkan_acquire_next_image(&wl->vk);
          flush_wayland_fd(&wl->input);
 #endif
          break;
